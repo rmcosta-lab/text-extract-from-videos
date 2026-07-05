@@ -29,12 +29,12 @@ reconstruction, or failure report yet.
 - ~~Save used frames to `frames_usados/`.~~
 - ~~**Exit criterion:** one real video produces all raw artifacts without crashing.~~
 
-## Phase 2 — Frame preprocessing & selection
-- `preprocess_frame()`: grayscale, resize, adaptive/Otsu threshold, sharpen/denoise.
-- `is_frame_blurry()` via Laplacian variance; skip blurry frames.
-- SSIM / diff to skip near-duplicate frames.
-- Adaptive `sample_step` by detected FPS (30 / 60 / 120).
-- `--crop-*` flags wired into preprocessing.
+## ~~Phase 2 — Frame preprocessing & selection~~ ✅
+- ~~`preprocess_frame()`: grayscale, resize, adaptive/Otsu threshold, sharpen/denoise.~~
+- ~~`is_frame_blurry()` via Laplacian variance; skip blurry frames.~~
+- ~~SSIM / diff to skip near-duplicate frames.~~
+- ~~Adaptive `sample_step` by detected FPS (30 / 60 / 120).~~
+- ~~`--crop-*` flags wired into preprocessing.~~
 
 ## Phase 3 — Line-number-aware reconstruction
 - `parse_code_lines()`: detect and split leading line numbers from content.
