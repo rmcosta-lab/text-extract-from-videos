@@ -1,15 +1,19 @@
 """Extract the source code shown in a screen-recording video via local OCR.
 
-Phase 2: metadata (ffprobe with OpenCV fallback) → FPS-adaptive frame sampling
+Phase 3: metadata (ffprobe with OpenCV fallback) → FPS-adaptive frame sampling
 → preprocessing (crop → grayscale → upscale → Otsu threshold → denoise) → blur
-and near-duplicate skipping → OCR on the preprocessed frames → raw dump
+and near-duplicate skipping → OCR on the preprocessed frames → line-number
+parsing and merge of repeated reads (best by frequency / confidence /
+sharpness, `[OCR_UNCERTAIN]` markers on low-confidence lines) → outputs
 (`metadata_video.json`, `ocr_raw.csv`, `codigo_extraido.txt`,
-`frames_usados/`). Text reconstruction and the failure report arrive in later
-phases.
+`frames_usados/`). Time-based reconstruction without line numbers and the
+failure report arrive in later phases.
 """
 
 import json
+import re
 import subprocess
+from collections import Counter
 from collections.abc import Iterable, Iterator
 from fractions import Fraction
 from pathlib import Path
@@ -42,6 +46,18 @@ SSIM_THRESHOLD = 0.98
 
 SSIM_COMPARE_WIDTH = 256
 """Frames are shrunk to this width before SSIM, for speed."""
+
+LINE_NUMBER_RE = re.compile(r"^\s*(?P<number>\d{1,5})[:.|]?(?: (?P<content>.*))?$")
+"""Leading editor line number: bounded digits, optional separator, then content."""
+
+MIN_NUMBERED_SHARE = 0.6
+"""Numbered reconstruction runs when at least this share of reads has a number."""
+
+MIN_INCREASING_SHARE = 0.8
+"""...and detected numbers are increasing within a frame at least this often."""
+
+OCR_UNCERTAIN_CONFIDENCE = 60.0
+"""Merged lines whose best read is below this get an `[OCR_UNCERTAIN]` marker."""
 
 app = typer.Typer(add_completion=False)
 console = Console()
@@ -76,11 +92,20 @@ class VideoMetadata(BaseModel):
     """Set by `main()` once the adaptive step is chosen from the detected FPS."""
 
 
+class OCRLine(BaseModel):
+    """One text line within an OCR engine read, with its own confidence."""
+
+    text: str
+    confidence: float | None = None
+
+
 class OCRResult(BaseModel):
     """One OCR engine read of a single image."""
 
     text: str
     confidence: float | None = None
+    lines: list[OCRLine] = Field(default_factory=list)
+    """Per-line reads backing `text`, in top-to-bottom image order."""
 
 
 class OCRRow(BaseModel):
@@ -91,7 +116,30 @@ class OCRRow(BaseModel):
     time_seconds: float
     time_formatted: str
     confidence: float | None = None
+    sharpness: float = 0.0
+    """Laplacian variance of the source frame — a merge quality signal."""
     frame_image_path: str
+    lines: list[OCRLine] = Field(default_factory=list)
+    """Per-line engine reads; feeds reconstruction, not the CSV."""
+
+
+class LineRead(BaseModel):
+    """One read of one on-screen code line, with provenance for tracing."""
+
+    line_number: int | None = None
+    content: str
+    frame_number: int
+    time_seconds: float
+    time_formatted: str
+    confidence: float | None = None
+    sharpness: float = 0.0
+
+
+class MergedLine(BaseModel):
+    """The best read chosen for one line number by `merge_ocr_results()`."""
+
+    read: LineRead
+    uncertain: bool = False
 
 
 # --- Metadata ------------------------------------------------------------
@@ -283,9 +331,14 @@ def preprocess_frame(image: MatLike, crop: CropBox) -> MatLike:
     return cv2.medianBlur(binary, DENOISE_KERNEL_SIZE)
 
 
-def is_frame_blurry(gray_image: MatLike) -> bool:
-    """Laplacian-variance sharpness gate: True when below ``BLUR_THRESHOLD``."""
-    return float(cv2.Laplacian(gray_image, cv2.CV_64F).var()) < BLUR_THRESHOLD
+def frame_sharpness(gray_image: MatLike) -> float:
+    """Laplacian variance — the sharpness score for the blur gate and merging."""
+    return float(cv2.Laplacian(gray_image, cv2.CV_64F).var())
+
+
+def is_frame_blurry(sharpness: float) -> bool:
+    """Sharpness gate: True when the score is below ``BLUR_THRESHOLD``."""
+    return sharpness < BLUR_THRESHOLD
 
 
 def _ssim_thumbnail(gray_image: MatLike) -> MatLike:
@@ -328,10 +381,10 @@ class TesseractEngine:
             ) from exc
 
     def recognize(self, image: MatLike) -> OCRResult:
-        """OCR the whole image, preserving line breaks; mean word confidence."""
+        """OCR the whole image; per-line reads with mean word confidence each."""
         data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
-        lines: dict[tuple[int, int, int], list[str]] = {}
-        confidences: list[float] = []
+        words_by_line: dict[tuple[int, int, int], list[str]] = {}
+        confs_by_line: dict[tuple[int, int, int], list[float]] = {}
         words = zip(
             data["text"],
             data["conf"],
@@ -343,15 +396,27 @@ class TesseractEngine:
         for word, conf, block, paragraph, line in words:
             if not word.strip():
                 continue
-            lines.setdefault((block, paragraph, line), []).append(word)
+            key = (block, paragraph, line)
+            words_by_line.setdefault(key, []).append(word)
             confidence = float(conf)
             if confidence >= 0:
-                confidences.append(confidence)
-        text = "\n".join(" ".join(parts) for parts in lines.values())
+                confs_by_line.setdefault(key, []).append(confidence)
+
+        lines: list[OCRLine] = []
+        for key, parts in words_by_line.items():
+            confs = confs_by_line.get(key, [])
+            lines.append(
+                OCRLine(
+                    text=" ".join(parts),
+                    confidence=round(sum(confs) / len(confs), 2) if confs else None,
+                )
+            )
+        all_confs = [c for confs in confs_by_line.values() for c in confs]
         mean_confidence = (
-            round(sum(confidences) / len(confidences), 2) if confidences else None
+            round(sum(all_confs) / len(all_confs), 2) if all_confs else None
         )
-        return OCRResult(text=text, confidence=mean_confidence)
+        text = "\n".join(line.text for line in lines)
+        return OCRResult(text=text, confidence=mean_confidence, lines=lines)
 
 
 # --- Sampling & OCR pipeline ----------------------------------------------
@@ -426,7 +491,8 @@ def run_ocr(
     for frame_number, time_seconds, image in progress:
         stats.frames_sampled += 1
         gray = _cropped_grayscale(image, crop)
-        if is_frame_blurry(gray):
+        sharpness = frame_sharpness(gray)
+        if is_frame_blurry(sharpness):
             stats.frames_discarded_blurry += 1
             continue
         thumbnail = _ssim_thumbnail(gray)
@@ -451,17 +517,142 @@ def run_ocr(
                 time_seconds=round(time_seconds, 3),
                 time_formatted=_format_time(time_seconds),
                 confidence=result.confidence,
+                sharpness=round(sharpness, 2),
                 frame_image_path=str(frame_path),
+                lines=result.lines,
             )
         )
     return rows, stats
 
 
+# --- Reconstruction --------------------------------------------------------
+
+
+def parse_code_lines(rows: list[OCRRow]) -> list[LineRead]:
+    """Split each frame read into per-line reads, extracting leading line numbers.
+
+    A read that matches ``LINE_NUMBER_RE`` has its number and separator
+    stripped, keeping the content's own indentation; anything else keeps its
+    full text with ``line_number=None``. Fully blank reads are dropped.
+    """
+    reads: list[LineRead] = []
+    for row in rows:
+        for line in row.lines:
+            if not line.text.strip():
+                continue
+            match = LINE_NUMBER_RE.match(line.text)
+            if match:
+                line_number = int(match.group("number"))
+                content = match.group("content") or ""
+            else:
+                line_number = None
+                content = line.text
+            reads.append(
+                LineRead(
+                    line_number=line_number,
+                    content=content,
+                    frame_number=row.frame_number,
+                    time_seconds=row.time_seconds,
+                    time_formatted=row.time_formatted,
+                    confidence=line.confidence,
+                    sharpness=row.sharpness,
+                )
+            )
+    return reads
+
+
+def has_line_numbers(reads: list[LineRead]) -> bool:
+    """Decide whether the video shows editor line numbers.
+
+    True when most reads carry a leading number (``MIN_NUMBERED_SHARE``) and
+    those numbers are mostly increasing within each frame
+    (``MIN_INCREASING_SHARE``) — guarding against code that merely starts
+    with integers.
+    """
+    if not reads:
+        return False
+    numbered = [read for read in reads if read.line_number is not None]
+    if len(numbered) / len(reads) < MIN_NUMBERED_SHARE:
+        return False
+
+    increasing = 0
+    total_pairs = 0
+    by_frame: dict[int, list[int]] = {}
+    for read in numbered:
+        assert read.line_number is not None
+        by_frame.setdefault(read.frame_number, []).append(read.line_number)
+    for numbers in by_frame.values():
+        for previous, current in zip(numbers, numbers[1:], strict=False):
+            total_pairs += 1
+            if current > previous:
+                increasing += 1
+    if total_pairs == 0:
+        return True
+    return increasing / total_pairs >= MIN_INCREASING_SHARE
+
+
+def merge_ocr_results(reads: list[LineRead]) -> list[MergedLine]:
+    """Consolidate repeated reads of each numbered line into one best read.
+
+    Per line number: the most frequent content wins (whitespace-normalized
+    for counting), ties broken by confidence then frame sharpness. The
+    winning read's content is emitted verbatim — reads are never blended.
+    Below ``OCR_UNCERTAIN_CONFIDENCE`` (or with no confidence at all) the
+    line is flagged uncertain. Gaps in numbering are left as gaps.
+    """
+    by_number: dict[int, list[LineRead]] = {}
+    for read in reads:
+        if read.line_number is not None:
+            by_number.setdefault(read.line_number, []).append(read)
+
+    merged: list[MergedLine] = []
+    for line_number in sorted(by_number):
+        group = by_number[line_number]
+        frequency = Counter(" ".join(read.content.split()) for read in group)
+        top_count = max(frequency.values())
+        finalists = [
+            read
+            for read in group
+            if frequency[" ".join(read.content.split())] == top_count
+        ]
+        winner = max(
+            finalists,
+            key=lambda read: (
+                read.confidence if read.confidence is not None else -1.0,
+                read.sharpness,
+            ),
+        )
+        uncertain = (
+            winner.confidence is None or winner.confidence < OCR_UNCERTAIN_CONFIDENCE
+        )
+        merged.append(MergedLine(read=winner, uncertain=uncertain))
+    return merged
+
+
 # --- Outputs ---------------------------------------------------------------
 
 
-def write_outputs(metadata: VideoMetadata, rows: list[OCRRow], output: Path) -> None:
-    """Write `metadata_video.json`, `ocr_raw.csv`, and `codigo_extraido.txt`."""
+def _uncertain_marker(read: LineRead) -> str:
+    """The exact `[OCR_UNCERTAIN]` comment mandated by the mission spec."""
+    return (
+        f"# [OCR_UNCERTAIN] frame={read.frame_number} "
+        f'time={read.time_formatted} texto_original="{read.content}"'
+    )
+
+
+def write_outputs(
+    metadata: VideoMetadata,
+    rows: list[OCRRow],
+    merged: list[MergedLine] | None,
+    output: Path,
+) -> None:
+    """Write `metadata_video.json`, `ocr_raw.csv`, and `codigo_extraido.txt`.
+
+    With ``merged`` (line numbers detected), `codigo_extraido.txt` is the
+    consolidated code in line-number order, each uncertain line preceded by
+    its `[OCR_UNCERTAIN]` marker. Without it, the naive time-ordered
+    concatenation is kept (time-based reconstruction is Phase 4).
+    """
     metadata_path = output / "metadata_video.json"
     metadata_path.write_text(metadata.model_dump_json(indent=2) + "\n", "utf-8")
 
@@ -472,13 +663,22 @@ def write_outputs(metadata: VideoMetadata, rows: list[OCRRow], output: Path) -> 
             "frame": [row.frame_number for row in ordered],
             "time": [row.time_formatted for row in ordered],
             "confidence": [row.confidence for row in ordered],
+            "sharpness": [row.sharpness for row in ordered],
             "frame_image_path": [row.frame_image_path for row in ordered],
         }
     )
     frame.to_csv(output / "ocr_raw.csv", index=False)
 
-    # Naive concatenation in video-time order — no merging, dedup, or synthesis.
-    code = "\n\n".join(row.text for row in ordered)
+    if merged is not None:
+        lines: list[str] = []
+        for item in merged:
+            if item.uncertain:
+                lines.append(_uncertain_marker(item.read))
+            lines.append(item.read.content)
+        code = "\n".join(lines)
+    else:
+        # Naive concatenation in video-time order — no merging or synthesis.
+        code = "\n\n".join(row.text for row in ordered)
     (output / "codigo_extraido.txt").write_text(code + "\n", "utf-8")
 
 
@@ -571,7 +771,22 @@ def main(
             f"{stats.frames_discarded_duplicate} near-duplicate) — nothing "
             "to OCR. Check the crop region and the video quality."
         )
-    write_outputs(metadata, rows, output)
+    reads = parse_code_lines(rows)
+    merged: list[MergedLine] | None = None
+    if has_line_numbers(reads):
+        merged = merge_ocr_results(reads)
+        uncertain = sum(1 for item in merged if item.uncertain)
+        console.print(
+            f"[green]Reconstruction:[/green] line numbers detected — "
+            f"{len(merged)} lines merged from {len(reads)} reads "
+            f"({uncertain} marked [OCR_UNCERTAIN])"
+        )
+    else:
+        console.print(
+            "[green]Reconstruction:[/green] no line numbers detected — "
+            "keeping naive time-ordered concatenation"
+        )
+    write_outputs(metadata, rows, merged, output)
 
     console.print(
         f"[green]Selection:[/green] {stats.frames_sampled} frames sampled, "
