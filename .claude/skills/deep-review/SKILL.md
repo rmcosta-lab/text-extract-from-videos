@@ -1,6 +1,6 @@
 ---
 name: deep-review
-description: Deep multi-agent review of all changes on the current branch — fans out three subagents (correctness, code quality, product/frontend) over the branch diff and returns one prioritized findings report. Use when asked for a deep/thorough review of branch changes before merge.
+description: Deep multi-agent review of all changes on the current branch — fans out three subagents (correctness, Python quality, product/fidelity) over the branch diff and returns one prioritized findings report. Use when asked for a deep/thorough review of branch changes before merge.
 ---
 
 # Deep review
@@ -29,9 +29,9 @@ Deep-review every change on the current branch (or a passed target) by fanning o
 
 Use these three lenses by default. Adapt the emphasis to what the diff actually touches, but always keep them distinct so coverage does not overlap:
 
-- **A — Correctness & bugs**: logic errors, broken behavior, unhandled edge cases, regressions, type-safety holes, async/state mistakes, broken or missing `next-intl` message keys, mismatches between `pt` and `en` data, runtime errors. "Does it actually work, and is anything subtly wrong?"
-- **B — Code quality & consistency**: simplification, duplication that should be reused, dead code, naming, file/component structure, and whether the change follows the patterns already used elsewhere in the repo (component conventions, `data/` shape, Tailwind usage). "Is this the simplest, most consistent way to do it?"
-- **C — Product & frontend quality**: UX, accessibility (semantics, keyboard, contrast, `aria-*`, alt text), responsiveness, i18n completeness (no hardcoded strings, locale-aware routing/metadata), SEO (metadata, `sitemap`, `opengraph`), and performance. "Is the end result good for the user in both languages?"
+- **A — Correctness & bugs**: logic errors, broken behavior, unhandled edge cases (undetectable FPS, empty OCR, missing `ffprobe`/`tesseract`, unwritable output dir, videos with/without line numbers), regressions, type-safety holes, off-by-one in frame/line handling, wrong sampling math, crashes on real input. "Does the pipeline actually work end to end, and is anything subtly wrong?"
+- **B — Python quality & consistency**: simplification, duplication that should be reused, dead code, naming, type hints, adherence to the tech-stack (typer, pydantic models between stages, the pluggable OCR engine interface, no hidden global state) and the exact function seams named in the README. "Is this the simplest, most consistent, correctly-typed way to do it?"
+- **C — Product & fidelity quality**: does the output honor the spec — the five output artifacts (`codigo_extraido.txt`, `relatorio_falhas.md`, `ocr_raw.csv`, `metadata_video.json`, `frames_usados/`), the "never invent code" rule, `[OCR_UNCERTAIN]` markers, missing-line detection, the failure report contents, offline operation (no network calls), and clear actionable error messages. "Is the extracted result faithful and trustworthy for the user?"
 
 ### 3. Spawn the three subagents in parallel
 
@@ -78,6 +78,6 @@ Print a single consolidated report:
 - [ ] `file:line` — issue. _(B)_ Suggestion.
 ```
 
-- Use clickable `[file.tsx:42](path#L42)` markdown links for every location.
+- Use clickable `[extract_code_from_video.py:42](extract_code_from_video.py#L42)` markdown links for every location.
 - End with a one-line verdict: is the branch in good shape to merge, or are there blockers to address first?
 - Do **not** apply any fixes. This skill only reports. Offer to fix specific findings if the user wants.

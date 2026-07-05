@@ -11,9 +11,9 @@ Wrap up the current roadmap phase: update changelog, mark complete, commit, merg
 
 ### 1. Detect current phase
 
-- Read the current branch name (e.g. `fase-4-experiencia`).
+- Read the current branch name (e.g. `phase-1-thin-vertical-slice`).
 - Extract the phase number and name from the branch.
-- Open `specs/roadmap.md` and locate the matching `## Fase N` heading.
+- Open `specs/roadmap.md` and locate the matching `## Phase N` heading.
 - If no matching phase is found, stop and tell the user.
 
 ### 2. Update changelog
@@ -22,9 +22,9 @@ Wrap up the current roadmap phase: update changelog, mark complete, commit, merg
 
 ### 3. Mark phase complete in roadmap
 
-- In `specs/roadmap.md`, apply strikethrough and the ✅ marker to the phase heading (e.g. `## Fase 4 — Experiencia Profissional` → `## ~~Fase 4 — Experiencia Profissional~~ ✅`).
+- In `specs/roadmap.md`, apply strikethrough and the ✅ marker to the phase heading (e.g. `## Phase 1 — Thin vertical slice ⭐` → `## ~~Phase 1 — Thin vertical slice~~ ✅`).
 - Apply strikethrough to each bullet under that phase (e.g. `- Item` → `- ~~Item~~`).
-- Follow the same formatting pattern used by previously completed phases (Fase 1, Fase 3).
+- Once any phase is complete, keep every later phase consistent with that same formatting pattern.
 
 ### 4. Commit
 
