@@ -1,14 +1,16 @@
 """Extract the source code shown in a screen-recording video via local OCR.
 
-Phase 4: metadata (ffprobe with OpenCV fallback) → FPS-adaptive frame sampling
+Phase 5: metadata (ffprobe with OpenCV fallback) → FPS-adaptive frame sampling
 → preprocessing (crop → grayscale → upscale → Otsu threshold → denoise) → blur
 and near-duplicate skipping → OCR on the preprocessed frames → reconstruction
 (line-number merge when the editor shows numbers; otherwise video-time order
 with scroll overlap deduplicated via rapidfuzz — best read by frequency /
 confidence / sharpness, `[OCR_UNCERTAIN]` markers on low-confidence lines) →
-outputs (`metadata_video.json`, `ocr_raw.csv`, `codigo_extraido.txt`,
-`frames_usados/`). Gap detection and the failure report arrive in later
-phases.
+gap detection on the numbered path (`detect_missing_lines()`) → outputs
+(`metadata_video.json`, `ocr_raw.csv`, `codigo_extraido.txt`,
+`relatorio_falhas.md`, `frames_usados/`). The failure report surfaces every
+discarded frame, missing line, low-confidence passage, and unextractable
+span — gaps are reported, never stitched over.
 """
 
 import json
@@ -145,6 +147,16 @@ class MergedLine(BaseModel):
 
     read: LineRead
     uncertain: bool = False
+
+
+class FrameOutcome(BaseModel):
+    """Whether one sampled frame yielded usable text — feeds the failure report."""
+
+    frame_number: int
+    time_seconds: float
+    time_formatted: str
+    usable: bool
+    """True when the frame survived selection and OCR returned non-blank text."""
 
 
 # --- Metadata ------------------------------------------------------------
@@ -297,7 +309,7 @@ class CropBox(BaseModel):
 
 
 class SelectionStats(BaseModel):
-    """Counts of sampled frames discarded before OCR (feeds the Phase 5 report)."""
+    """Counts of sampled frames discarded before OCR (feeds the failure report)."""
 
     frames_sampled: int = 0
     frames_discarded_blurry: int = 0
@@ -476,16 +488,31 @@ def run_ocr(
     frames_dir: Path,
     expected_samples: int,
     crop: CropBox,
-) -> tuple[list[OCRRow], SelectionStats]:
+) -> tuple[list[OCRRow], SelectionStats, list[FrameOutcome]]:
     """OCR the sampled frames that survive selection.
 
     Per candidate: crop + grayscale → blur gate → SSIM near-duplicate gate
     against the last accepted frame → full preprocessing → save the
     preprocessed image (what OCR actually sees) to `frames_usados/` → OCR.
     An empty OCR read is recorded as a row with empty text, not an error.
+    Every sampled frame also yields a :class:`FrameOutcome` — usable only
+    when it was kept and OCR returned non-blank text — so the failure report
+    can surface unextractable time spans from observed outcomes.
     """
     rows: list[OCRRow] = []
     stats = SelectionStats()
+    outcomes: list[FrameOutcome] = []
+
+    def record_outcome(frame_number: int, time_seconds: float, usable: bool) -> None:
+        outcomes.append(
+            FrameOutcome(
+                frame_number=frame_number,
+                time_seconds=round(time_seconds, 3),
+                time_formatted=_format_time(time_seconds),
+                usable=usable,
+            )
+        )
+
     last_accepted_thumbnail: MatLike | None = None
     progress = track(
         frames,
@@ -499,6 +526,7 @@ def run_ocr(
         sharpness = frame_sharpness(gray)
         if is_frame_blurry(sharpness):
             stats.frames_discarded_blurry += 1
+            record_outcome(frame_number, time_seconds, usable=False)
             continue
         thumbnail = _ssim_thumbnail(gray)
         if last_accepted_thumbnail is not None:
@@ -507,6 +535,7 @@ def run_ocr(
             )
             if score > SSIM_THRESHOLD:
                 stats.frames_discarded_duplicate += 1
+                record_outcome(frame_number, time_seconds, usable=False)
                 continue
         last_accepted_thumbnail = thumbnail
 
@@ -515,6 +544,7 @@ def run_ocr(
         if not cv2.imwrite(str(frame_path), processed):
             _fail(f"could not save frame image: [cyan]{frame_path}[/cyan]")
         result = engine.recognize(processed)
+        record_outcome(frame_number, time_seconds, usable=bool(result.text.strip()))
         rows.append(
             OCRRow(
                 text=result.text,
@@ -527,7 +557,7 @@ def run_ocr(
                 lines=result.lines,
             )
         )
-    return rows, stats
+    return rows, stats, outcomes
 
 
 # --- Reconstruction --------------------------------------------------------
@@ -699,6 +729,303 @@ def reconstruct_by_time(reads: list[LineRead]) -> list[MergedLine]:
     return [_best_read(group) for group in document]
 
 
+# --- Gap detection & failure report -----------------------------------------
+
+
+class GapNeighbor(BaseModel):
+    """The nearest extracted line on one side of a numbering gap."""
+
+    line_number: int
+    frame_number: int
+    time_seconds: float
+    time_formatted: str
+
+
+class MissingLine(BaseModel):
+    """One line number absent from the numbered reconstruction.
+
+    Either neighbor is None when the gap touches the start or end of the
+    numbering — the report then says so instead of fabricating a timestamp.
+    """
+
+    line_number: int
+    before: GapNeighbor | None = None
+    after: GapNeighbor | None = None
+
+
+class TimeSpan(BaseModel):
+    """A contiguous run of sampled frames that yielded no usable text."""
+
+    start_seconds: float
+    end_seconds: float
+    start_formatted: str
+    end_formatted: str
+    frames: int
+
+
+class FailureReport(BaseModel):
+    """Everything `relatorio_falhas.md` renders, aggregated from run data."""
+
+    video_path: str
+    metadata: VideoMetadata
+    stats: SelectionStats
+    lines_extracted: int
+    line_numbers_detected: bool
+    missing_lines: list[MissingLine] = Field(default_factory=list)
+    uncertain_lines: list[MergedLine] = Field(default_factory=list)
+    unextractable: list[TimeSpan] = Field(default_factory=list)
+
+
+def _gap_neighbor(item: MergedLine) -> GapNeighbor:
+    """Provenance of a merged line as one side of a numbering gap."""
+    read = item.read
+    assert read.line_number is not None
+    return GapNeighbor(
+        line_number=read.line_number,
+        frame_number=read.frame_number,
+        time_seconds=read.time_seconds,
+        time_formatted=read.time_formatted,
+    )
+
+
+def detect_missing_lines(merged: list[MergedLine]) -> list[MissingLine]:
+    """Flag every line number absent from the numbered reconstruction.
+
+    Walks the numbered merged lines in line-number order: each jump greater
+    than 1 yields one :class:`MissingLine` per absent number, carrying the
+    surrounding lines' timestamps; numbering that starts above 1 yields the
+    leading numbers as gaps with no before-neighbor. Reads without line
+    numbers (the time-ordered path) produce no gaps — where numbering is
+    absent, missing lines are never guessed. Empty and single-line input
+    return an empty list.
+    """
+    numbered = sorted(
+        (
+            (item.read.line_number, item)
+            for item in merged
+            if item.read.line_number is not None
+        ),
+        key=lambda pair: pair[0],
+    )
+    if not numbered:
+        return []
+
+    missing: list[MissingLine] = []
+    first_number, first_item = numbered[0]
+    for absent in range(1, first_number):
+        missing.append(MissingLine(line_number=absent, after=_gap_neighbor(first_item)))
+    for (previous_number, previous_item), (next_number, next_item) in zip(
+        numbered, numbered[1:], strict=False
+    ):
+        for absent in range(previous_number + 1, next_number):
+            missing.append(
+                MissingLine(
+                    line_number=absent,
+                    before=_gap_neighbor(previous_item),
+                    after=_gap_neighbor(next_item),
+                )
+            )
+    return missing
+
+
+def unextractable_sections(outcomes: list[FrameOutcome]) -> list[TimeSpan]:
+    """Group consecutive unusable sampled frames into (start, end) time spans.
+
+    Spans come only from observed per-frame outcomes — frames discarded as
+    blurry / near-duplicate or whose OCR came back blank; content is never
+    inferred.
+    """
+    spans: list[TimeSpan] = []
+    run: list[FrameOutcome] = []
+
+    def flush_run() -> None:
+        if run:
+            spans.append(
+                TimeSpan(
+                    start_seconds=run[0].time_seconds,
+                    end_seconds=run[-1].time_seconds,
+                    start_formatted=run[0].time_formatted,
+                    end_formatted=run[-1].time_formatted,
+                    frames=len(run),
+                )
+            )
+            run.clear()
+
+    for outcome in outcomes:
+        if outcome.usable:
+            flush_run()
+        else:
+            run.append(outcome)
+    flush_run()
+    return spans
+
+
+CAPTURE_RECOMMENDATIONS = [
+    "Grave em resolução maior (1080p ou superior).",
+    "Reduza a velocidade do scroll durante a gravação.",
+    "Aumente a fonte do editor de código.",
+    "Use um tema de alto contraste no editor.",
+]
+"""Static capture recommendations mandated by the README, always included."""
+
+BLURRY_SHARE_WARNING = 0.3
+"""Above this share of blurry discards, the report reinforces slower scrolling."""
+
+
+def _missing_line_entry(missing: MissingLine) -> str:
+    """Render one missing line per the README phrasing, without inventing times."""
+    if missing.before and missing.after:
+        # Scroll overlap means the neighbors' best reads may come from any
+        # frame each line appears in; render the window chronologically.
+        first, second = sorted(
+            (missing.before, missing.after), key=lambda side: side.time_seconds
+        )
+        return (
+            f"Linha {missing.line_number} possivelmente ausente entre os tempos "
+            f"{first.time_formatted} e {second.time_formatted}."
+        )
+    if missing.after:
+        return (
+            f"Linha {missing.line_number} possivelmente ausente antes do tempo "
+            f"{missing.after.time_formatted} (sem linha extraída antes da lacuna)."
+        )
+    if missing.before:
+        return (
+            f"Linha {missing.line_number} possivelmente ausente depois do tempo "
+            f"{missing.before.time_formatted} (sem linha extraída depois da lacuna)."
+        )
+    return (
+        f"Linha {missing.line_number} possivelmente ausente "
+        "(sem linhas vizinhas extraídas)."
+    )
+
+
+def _uncertain_entry(item: MergedLine) -> str:
+    """Render one low-confidence merged line with its frame/time provenance."""
+    read = item.read
+    line_part = f"linha {read.line_number}, " if read.line_number is not None else ""
+    confidence = f"{read.confidence:.1f}" if read.confidence is not None else "n/d"
+    return (
+        f"- {line_part}frame={read.frame_number}, tempo={read.time_formatted}, "
+        f'confiança={confidence}: `"{read.content}"`'
+    )
+
+
+def write_failure_report(report: FailureReport, output: Path) -> None:
+    """Render `relatorio_falhas.md` in Portuguese, one section per README item.
+
+    Counts are always stated, including zeros. Failures are surfaced, never
+    repaired: missing lines stay absent from `codigo_extraido.txt`.
+    """
+    metadata = report.metadata
+    stats = report.stats
+    lines = [
+        "# Relatório de falhas",
+        "",
+        "## Resumo do vídeo",
+        "",
+        f"- Arquivo: `{report.video_path}`",
+        f"- Resolução: {metadata.width}x{metadata.height}",
+        f"- Duração: {metadata.duration_seconds:g}s "
+        f"({_format_time(metadata.duration_seconds)})",
+        f"- Total de frames: {metadata.total_frames}",
+        f"- Codec: {metadata.codec or 'desconhecido'}",
+        f"- Fonte dos metadados: {metadata.source}",
+        "",
+        "## FPS detectado",
+        "",
+        f"- FPS detectado: {metadata.fps:g}",
+        f"- Estratégia de amostragem: `{metadata.sampling_strategy}`",
+        "",
+        "## Frames analisados",
+        "",
+        f"- Frames amostrados (analisados): {stats.frames_sampled}",
+        f"- Frames mantidos para OCR: {stats.frames_kept}",
+        "",
+        "## Frames descartados por baixa nitidez",
+        "",
+        f"- Descartados por baixa nitidez (borrados): {stats.frames_discarded_blurry}",
+        f"- Descartados como quase duplicados: {stats.frames_discarded_duplicate}",
+        "",
+        "## Linhas extraídas",
+        "",
+        f"- Linhas extraídas: {report.lines_extracted}",
+    ]
+    if report.line_numbers_detected:
+        lines.append("- Reconstrução: por número de linha (numeração visível).")
+    else:
+        lines.append(
+            "- Reconstrução: por ordem temporal (sem números de linha visíveis)."
+        )
+    if report.lines_extracted == 0:
+        lines.append("- Nenhuma linha pôde ser extraída deste vídeo.")
+
+    lines += ["", "## Linhas faltantes", ""]
+    if not report.line_numbers_detected:
+        lines.append(
+            "A detecção de lacunas requer números de linha visíveis no editor. "
+            "Este vídeo foi reconstruído sem numeração, portanto nenhuma lacuna "
+            "pôde ser verificada — linhas faltantes nunca são adivinhadas."
+        )
+    else:
+        lines.append(f"- Linhas possivelmente ausentes: {len(report.missing_lines)}")
+        if report.missing_lines:
+            lines.append("")
+            lines += [_missing_line_entry(missing) for missing in report.missing_lines]
+        else:
+            lines.append("- Nenhuma linha faltante detectada.")
+
+    lines += [
+        "",
+        "## Trechos com baixa confiança",
+        "",
+        f"- Trechos com baixa confiança: {len(report.uncertain_lines)}",
+    ]
+    if report.uncertain_lines:
+        lines.append(
+            "- Cada trecho está marcado com `[OCR_UNCERTAIN]` em "
+            "`codigo_extraido.txt`; o frame correspondente está em "
+            "`frames_usados/` e a leitura bruta em `ocr_raw.csv`."
+        )
+        lines.append("")
+        lines += [_uncertain_entry(item) for item in report.uncertain_lines]
+    else:
+        lines.append("- Nenhum trecho com baixa confiança.")
+
+    lines += [
+        "",
+        "## Trechos impossíveis de extrair",
+        "",
+        f"- Trechos sem texto utilizável: {len(report.unextractable)}",
+    ]
+    if report.unextractable:
+        lines.append("")
+        lines += [
+            f"- De {span.start_formatted} a {span.end_formatted} "
+            f"({span.frames} frame(s) amostrado(s) sem texto utilizável — "
+            "descartados ou com OCR vazio)."
+            for span in report.unextractable
+        ]
+    else:
+        lines.append("- Nenhum trecho impossível de extrair.")
+
+    lines += ["", "## Recomendações de captura", ""]
+    lines += [f"- {item}" for item in CAPTURE_RECOMMENDATIONS]
+    if (
+        stats.frames_sampled
+        and stats.frames_discarded_blurry / stats.frames_sampled > BLURRY_SHARE_WARNING
+    ):
+        lines.append(
+            f"- Atenção: {stats.frames_discarded_blurry} de "
+            f"{stats.frames_sampled} frames amostrados foram descartados por "
+            "baixa nitidez — reduzir a velocidade do scroll deve melhorar "
+            "bastante a extração."
+        )
+
+    report_path = output / "relatorio_falhas.md"
+    report_path.write_text("\n".join(lines) + "\n", "utf-8")
+
+
 # --- Outputs ---------------------------------------------------------------
 
 
@@ -828,7 +1155,7 @@ def main(
 
     expected_samples = -(-metadata.total_frames // step)
     frames = sample_frames(video, metadata.fps, step)
-    rows, stats = run_ocr(frames, engine, frames_dir, expected_samples, crop)
+    rows, stats, outcomes = run_ocr(frames, engine, frames_dir, expected_samples, crop)
     if not rows:
         _fail(
             "every sampled frame was discarded by selection "
@@ -837,7 +1164,8 @@ def main(
             "to OCR. Check the crop region and the video quality."
         )
     reads = parse_code_lines(rows)
-    if has_line_numbers(reads):
+    numbered = has_line_numbers(reads)
+    if numbered:
         merged = merge_ocr_results(reads)
         path_taken = "line numbers detected — merged by line number"
     else:
@@ -852,10 +1180,28 @@ def main(
     )
     write_outputs(metadata, rows, merged, output)
 
+    missing = detect_missing_lines(merged)
+    report = FailureReport(
+        video_path=str(video),
+        metadata=metadata,
+        stats=stats,
+        lines_extracted=len(merged),
+        line_numbers_detected=numbered,
+        missing_lines=missing,
+        uncertain_lines=[item for item in merged if item.uncertain],
+        unextractable=unextractable_sections(outcomes),
+    )
+    write_failure_report(report, output)
+
     console.print(
         f"[green]Selection:[/green] {stats.frames_sampled} frames sampled, "
         f"{stats.frames_kept} kept, {stats.frames_discarded_blurry} discarded "
         f"as blurry, {stats.frames_discarded_duplicate} as near-duplicate"
+    )
+    console.print(
+        f"[green]Report:[/green] {len(missing)} missing lines, "
+        f"{uncertain} uncertain, {len(report.unextractable)} unextractable "
+        f"spans → [cyan]{output / 'relatorio_falhas.md'}[/cyan]"
     )
     non_empty = sum(1 for row in rows if row.text)
     console.print(

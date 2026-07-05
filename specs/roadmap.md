@@ -46,11 +46,11 @@ reconstruction, or failure report yet.
 - ~~Reconstruct order by video time.~~
 - ~~Remove scroll-induced duplicates; `rapidfuzz` fuzzy consolidation of repeats.~~
 
-## Phase 5 — Gap detection & failure report
-- `detect_missing_lines()`: flag gaps in numbering with surrounding timestamps.
-- `relatorio_falhas.md`: video summary, detected FPS, frames analyzed, frames
+## ~~Phase 5 — Gap detection & failure report~~ ✅
+- ~~`detect_missing_lines()`: flag gaps in numbering with surrounding timestamps.~~
+- ~~`relatorio_falhas.md`: video summary, detected FPS, frames analyzed, frames
   discarded (low sharpness), lines extracted, missing lines, low-confidence
-  passages, unextractable sections, and capture recommendations.
+  passages, unextractable sections, and capture recommendations.~~
 
 ## Phase 6 — Robustness & polish
 - Handle all named error cases with clear messages (missing `ffprobe`/
