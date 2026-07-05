@@ -42,9 +42,9 @@ reconstruction, or failure report yet.
   by confidence, sharpness, frequency; order by line number.~~
 - ~~Emit `[OCR_UNCERTAIN]` markers for low-confidence lines. **Never invent code.**~~
 
-## Phase 4 — No-line-number reconstruction
-- Reconstruct order by video time.
-- Remove scroll-induced duplicates; `rapidfuzz` fuzzy consolidation of repeats.
+## ~~Phase 4 — No-line-number reconstruction~~ ✅
+- ~~Reconstruct order by video time.~~
+- ~~Remove scroll-induced duplicates; `rapidfuzz` fuzzy consolidation of repeats.~~
 
 ## Phase 5 — Gap detection & failure report
 - `detect_missing_lines()`: flag gaps in numbering with surrounding timestamps.
