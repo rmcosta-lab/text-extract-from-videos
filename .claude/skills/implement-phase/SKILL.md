@@ -1,6 +1,6 @@
 ---
 name: implement-phase
-description: Implement the current roadmap phase by following its plan.md, then verify every criterion in validation.md (build, lint, acceptance checks).
+description: Implement the current roadmap phase by following its plan.md, then verify every criterion in validation.md (ruff, mypy, real script run, acceptance checks).
 ---
 
 # Implement phase
@@ -11,9 +11,9 @@ Implement the current phase by following its plan, then verify all validation cr
 
 ### 1. Detect current phase
 
-- Read the current branch name (e.g. `fase-5-polish-seo`).
+- Read the current branch name (e.g. `phase-1-thin-vertical-slice`).
 - Extract the phase number and slug from the branch.
-- Locate the matching spec directory under `specs/` (e.g. `specs/2026-06-27-polish-seo/`).
+- Locate the matching spec directory under `specs/` (e.g. `specs/2026-07-05-thin-vertical-slice/`).
 - If no matching spec directory is found, tell the user and stop.
 
 ### 2. Load spec files
@@ -37,19 +37,19 @@ Execute each numbered task group in `plan.md` in order, top to bottom:
 
 ### 4. Run automated checks
 
-After all plan tasks are complete, run the automated checks from the Tecnico section of `validation.md`:
+After all plan tasks are complete, run the automated checks from the Technical section of `validation.md`:
 
-1. `pnpm build` — must exit with no errors.
-2. `pnpm lint` — must pass with no warnings.
-3. If either fails, fix the issues and re-run until both pass.
+1. `ruff check` (and `ruff format --check`) — lint / formatting.
+2. `mypy` on the changed modules — type-checking.
+3. A real run of `extract_code_from_video.py` on a test video, per the phase's exit criterion.
+
+If any fail, fix the issues and re-run until all pass.
 
 ### 5. Validate acceptance criteria
 
 Go through every checkbox in `validation.md`, section by section:
 
-- **Automatable checks** (build, lint, console errors): run the command and mark pass/fail.
-- **Inspectable checks** (SEO tags, JSON-LD, sitemap, robots.txt, analytics components): read the relevant source files or use the dev server to verify the output exists and is correct.
-- **Visual/manual checks** (responsiveness, cross-browser, motion, layout): list these separately as items the user needs to verify manually.
+- **Automatable checks** (ruff, mypy, script run, output artifacts produced): run the command and mark pass/fail.
 
 Present results as a checklist with status:
 

@@ -63,6 +63,13 @@ requirement, not an aspiration.
   `ffprobe`/`tesseract` not installed, undetectable FPS, empty OCR, unwritable
   output dir).
 
+## Quality tooling
+
+- **`ruff`** for linting and formatting.
+- **`mypy`** for static type-checking (backs the "type hints everywhere" rule).
+- These are the automated gates run by the phase skills in place of a "build"
+  step; a phase is not done until `ruff`, `mypy`, and a real script run pass.
+
 ## Conventions
 
 - Modular functions with the exact seams named in the README:
