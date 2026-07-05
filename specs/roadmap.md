@@ -52,11 +52,11 @@ reconstruction, or failure report yet.
   discarded (low sharpness), lines extracted, missing lines, low-confidence
   passages, unextractable sections, and capture recommendations.~~
 
-## Phase 6 — Robustness & polish
-- Handle all named error cases with clear messages (missing `ffprobe`/
-  `tesseract`, undetectable FPS, empty OCR, permissions).
-- `rich` logging/progress throughout.
-- Short logic explanation + example command in the README.
+## ~~Phase 6 — Robustness & polish~~ ✅
+- ~~Handle all named error cases with clear messages (missing `ffprobe`/
+  `tesseract`, undetectable FPS, empty OCR, permissions).~~
+- ~~`rich` logging/progress throughout.~~
+- ~~Short logic explanation + example command in the README.~~
 
 ## Future (not scheduled)
 - PaddleOCR backend behind the existing OCR interface.

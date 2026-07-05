@@ -209,3 +209,49 @@ Entregáveis:
 3. Explicação curta da lógica.
 4. Lista de instalação das dependências.
 5. Sugestões de melhoria futura, como PaddleOCR, modelo vision-language local ou integração com LLM para revisar o código extraído sem inventar trechos.
+
+---
+
+## Exemplo de comando de execução
+
+```bash
+python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/
+```
+
+Com crop, para recortar bordas do editor (barra lateral, abas, minimap) antes
+do OCR — valores em pixels a partir de cada borda:
+
+```bash
+python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \
+  --crop-left 60 --crop-top 40 --crop-right 20 --crop-bottom 30
+```
+
+## Explicação curta da lógica
+
+1. **Metadados** — `ffprobe` lê FPS, duração, resolução, total de frames e
+   codec; se o `ffprobe` faltar ou falhar, o OpenCV entra como fallback (com
+   aviso). `metadata_video.json` é gravado já nesta etapa, para que mesmo uma
+   execução que falhe depois fique inspecionável.
+2. **Amostragem adaptativa** — o passo de amostragem é escolhido pelo FPS
+   detectado (30/60/120 fps), gerando cerca de um frame candidato a cada 0,5 s
+   em vez de processar todos os frames.
+3. **Pré-processamento e seleção** — cada candidato é cortado (crop),
+   convertido para grayscale, ampliado, binarizado (Otsu) e limpo. Frames
+   borrados (variância do Laplaciano baixa) e quase duplicados (SSIM alto)
+   são descartados; os frames aproveitados são salvos em `frames_usados/`.
+4. **OCR** — o Tesseract (via `pytesseract`, atrás de uma interface trocável
+   por PaddleOCR no futuro) lê cada frame mantido; toda leitura bruta vai para
+   `ocr_raw.csv` com frame, tempo e confiança.
+5. **Reconstrução** — se o editor mostra números de linha, as múltiplas
+   leituras de cada linha são consolidadas e ordenadas pelo número; sem
+   numeração, a ordem é o tempo do vídeo e as duplicatas do scroll são
+   removidas por similaridade fuzzy. A melhor leitura vence por frequência,
+   confiança e nitidez — o texto nunca é misturado nem inventado; linhas de
+   baixa confiança recebem o marcador `# [OCR_UNCERTAIN]`.
+6. **Lacunas e relatório** — com numeração visível, saltos (ex.: linha 32 →
+   34) viram registros de linha faltante; `relatorio_falhas.md` resume frames
+   descartados, linhas faltantes, trechos de baixa confiança, trechos
+   impossíveis de extrair e recomendações de captura.
+7. **Saídas** — o código reconstruído vai para `codigo_extraido.txt`, ao lado
+   de `relatorio_falhas.md`, `ocr_raw.csv`, `metadata_video.json` e
+   `frames_usados/`.

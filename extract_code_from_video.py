@@ -1,6 +1,6 @@
 """Extract the source code shown in a screen-recording video via local OCR.
 
-Phase 5: metadata (ffprobe with OpenCV fallback) → FPS-adaptive frame sampling
+Phase 6: metadata (ffprobe with OpenCV fallback) → FPS-adaptive frame sampling
 → preprocessing (crop → grayscale → upscale → Otsu threshold → denoise) → blur
 and near-duplicate skipping → OCR on the preprocessed frames → reconstruction
 (line-number merge when the editor shows numbers; otherwise video-time order
@@ -10,7 +10,11 @@ gap detection on the numbered path (`detect_missing_lines()`) → outputs
 (`metadata_video.json`, `ocr_raw.csv`, `codigo_extraido.txt`,
 `relatorio_falhas.md`, `frames_usados/`). The failure report surfaces every
 discarded frame, missing line, low-confidence passage, and unextractable
-span — gaps are reported, never stitched over.
+span — gaps are reported, never stitched over. Every named failure mode
+(missing video, missing ffprobe/tesseract, undetectable FPS, empty OCR,
+unwritable output directory) exits with code 1 and an actionable message;
+`metadata_video.json` and `frames_usados/` are written before OCR-dependent
+stages so failed runs stay inspectable.
 """
 
 import json
@@ -192,7 +196,11 @@ def _metadata_from_ffprobe(video: Path) -> VideoMetadata | None:
     try:
         completed = subprocess.run(command, capture_output=True, text=True, check=True)
     except FileNotFoundError:
-        _warn("ffprobe is not installed; falling back to OpenCV for metadata.")
+        _warn(
+            "ffprobe is not installed; falling back to OpenCV for metadata. "
+            "Install it with [bold]brew install ffmpeg[/bold] (macOS) or your "
+            "system package manager for more reliable metadata."
+        )
         return None
     except subprocess.CalledProcessError as exc:
         detail = exc.stderr.strip() or f"exit code {exc.returncode}"
@@ -1037,6 +1045,17 @@ def _uncertain_marker(read: LineRead) -> str:
     )
 
 
+def write_metadata(metadata: VideoMetadata, output: Path) -> None:
+    """Write `metadata_video.json`.
+
+    Called as soon as the sampling strategy is known — before OCR — so that
+    even a run that fails later (e.g. empty OCR) leaves the metadata on disk
+    for inspection.
+    """
+    metadata_path = output / "metadata_video.json"
+    metadata_path.write_text(metadata.model_dump_json(indent=2) + "\n", "utf-8")
+
+
 def write_outputs(
     metadata: VideoMetadata,
     rows: list[OCRRow],
@@ -1050,8 +1069,7 @@ def write_outputs(
     consolidated — each uncertain line preceded by its `[OCR_UNCERTAIN]`
     marker.
     """
-    metadata_path = output / "metadata_video.json"
-    metadata_path.write_text(metadata.model_dump_json(indent=2) + "\n", "utf-8")
+    write_metadata(metadata, output)
 
     ordered = sorted(rows, key=lambda row: row.time_seconds)
     frame = pd.DataFrame(
@@ -1151,11 +1169,20 @@ def main(
     metadata.sampling_strategy = (
         f"adaptive_fps={_nearest_fps_tier(metadata.fps)},step={step}"
     )
-    console.print(f"[green]Sampling:[/green] {metadata.sampling_strategy}")
-
     expected_samples = -(-metadata.total_frames // step)
+    console.print(
+        f"[green]Sampling:[/green] {metadata.sampling_strategy} "
+        f"(~{expected_samples} candidate frames)"
+    )
+    write_metadata(metadata, output)
+
     frames = sample_frames(video, metadata.fps, step)
     rows, stats, outcomes = run_ocr(frames, engine, frames_dir, expected_samples, crop)
+    console.print(
+        f"[green]Selection:[/green] {stats.frames_sampled} frames sampled, "
+        f"{stats.frames_kept} kept, {stats.frames_discarded_blurry} discarded "
+        f"as blurry, {stats.frames_discarded_duplicate} as near-duplicate"
+    )
     if not rows:
         _fail(
             "every sampled frame was discarded by selection "
@@ -1164,6 +1191,16 @@ def main(
             "to OCR. Check the crop region and the video quality."
         )
     reads = parse_code_lines(rows)
+    if not reads:
+        _fail(
+            f"OCR ran on {len(rows)} frame(s) but recognized no text in any "
+            "of them. The frames passed to OCR are in "
+            f"[cyan]{frames_dir}[/cyan] and the metadata in "
+            f"[cyan]{output / 'metadata_video.json'}[/cyan] for inspection. "
+            "Check that the crop region contains the code, and consider a "
+            "larger editor font, a higher recording resolution, or a "
+            "high-contrast editor theme."
+        )
     numbered = has_line_numbers(reads)
     if numbered:
         merged = merge_ocr_results(reads)
@@ -1194,19 +1231,15 @@ def main(
     write_failure_report(report, output)
 
     console.print(
-        f"[green]Selection:[/green] {stats.frames_sampled} frames sampled, "
-        f"{stats.frames_kept} kept, {stats.frames_discarded_blurry} discarded "
-        f"as blurry, {stats.frames_discarded_duplicate} as near-duplicate"
-    )
-    console.print(
         f"[green]Report:[/green] {len(missing)} missing lines, "
         f"{uncertain} uncertain, {len(report.unextractable)} unextractable "
         f"spans → [cyan]{output / 'relatorio_falhas.md'}[/cyan]"
     )
     non_empty = sum(1 for row in rows if row.text)
     console.print(
-        f"[green]Done:[/green] {len(rows)} frames OCR'd "
-        f"({non_empty} with text) → [cyan]{output}[/cyan]"
+        f"[green]Done:[/green] {len(rows)} frames OCR'd ({non_empty} with "
+        f"text). Outputs in [cyan]{output}[/cyan]: codigo_extraido.txt, "
+        "relatorio_falhas.md, ocr_raw.csv, metadata_video.json, frames_usados/"
     )
 
 
