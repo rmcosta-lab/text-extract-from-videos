@@ -36,11 +36,11 @@ reconstruction, or failure report yet.
 - ~~Adaptive `sample_step` by detected FPS (30 / 60 / 120).~~
 - ~~`--crop-*` flags wired into preprocessing.~~
 
-## Phase 3 — Line-number-aware reconstruction
-- `parse_code_lines()`: detect and split leading line numbers from content.
-- `merge_ocr_results()`: consolidate multiple reads of the same line; pick best
-  by confidence, sharpness, frequency; order by line number.
-- Emit `[OCR_UNCERTAIN]` markers for low-confidence lines. **Never invent code.**
+## ~~Phase 3 — Line-number-aware reconstruction~~ ✅
+- ~~`parse_code_lines()`: detect and split leading line numbers from content.~~
+- ~~`merge_ocr_results()`: consolidate multiple reads of the same line; pick best
+  by confidence, sharpness, frequency; order by line number.~~
+- ~~Emit `[OCR_UNCERTAIN]` markers for low-confidence lines. **Never invent code.**~~
 
 ## Phase 4 — No-line-number reconstruction
 - Reconstruct order by video time.
