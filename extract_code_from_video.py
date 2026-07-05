@@ -1,13 +1,14 @@
 """Extract the source code shown in a screen-recording video via local OCR.
 
-Phase 3: metadata (ffprobe with OpenCV fallback) → FPS-adaptive frame sampling
+Phase 4: metadata (ffprobe with OpenCV fallback) → FPS-adaptive frame sampling
 → preprocessing (crop → grayscale → upscale → Otsu threshold → denoise) → blur
-and near-duplicate skipping → OCR on the preprocessed frames → line-number
-parsing and merge of repeated reads (best by frequency / confidence /
-sharpness, `[OCR_UNCERTAIN]` markers on low-confidence lines) → outputs
-(`metadata_video.json`, `ocr_raw.csv`, `codigo_extraido.txt`,
-`frames_usados/`). Time-based reconstruction without line numbers and the
-failure report arrive in later phases.
+and near-duplicate skipping → OCR on the preprocessed frames → reconstruction
+(line-number merge when the editor shows numbers; otherwise video-time order
+with scroll overlap deduplicated via rapidfuzz — best read by frequency /
+confidence / sharpness, `[OCR_UNCERTAIN]` markers on low-confidence lines) →
+outputs (`metadata_video.json`, `ocr_raw.csv`, `codigo_extraido.txt`,
+`frames_usados/`). Gap detection and the failure report arrive in later
+phases.
 """
 
 import json
@@ -25,6 +26,7 @@ import pytesseract  # type: ignore[import-untyped]
 import typer
 from cv2.typing import MatLike
 from pydantic import BaseModel, Field, ValidationError
+from rapidfuzz import fuzz
 from rich.console import Console
 from rich.progress import track
 from skimage.metrics import structural_similarity
@@ -58,6 +60,9 @@ MIN_INCREASING_SHARE = 0.8
 
 OCR_UNCERTAIN_CONFIDENCE = 60.0
 """Merged lines whose best read is below this get an `[OCR_UNCERTAIN]` marker."""
+
+FUZZY_MATCH_THRESHOLD = 85.0
+"""rapidfuzz ratio (0-100) at/above which two reads count as the same line."""
 
 app = typer.Typer(add_completion=False)
 console = Console()
@@ -136,7 +141,7 @@ class LineRead(BaseModel):
 
 
 class MergedLine(BaseModel):
-    """The best read chosen for one line number by `merge_ocr_results()`."""
+    """The best read chosen for one reconstructed line of the output code."""
 
     read: LineRead
     uncertain: bool = False
@@ -528,19 +533,23 @@ def run_ocr(
 # --- Reconstruction --------------------------------------------------------
 
 
-def parse_code_lines(rows: list[OCRRow]) -> list[LineRead]:
+def parse_code_lines(
+    rows: list[OCRRow], *, strip_line_numbers: bool = True
+) -> list[LineRead]:
     """Split each frame read into per-line reads, extracting leading line numbers.
 
     A read that matches ``LINE_NUMBER_RE`` has its number and separator
     stripped, keeping the content's own indentation; anything else keeps its
     full text with ``line_number=None``. Fully blank reads are dropped.
+    With ``strip_line_numbers=False`` every line keeps its full text — used by
+    the unnumbered path so code that merely starts with an integer is not cut.
     """
     reads: list[LineRead] = []
     for row in rows:
         for line in row.lines:
             if not line.text.strip():
                 continue
-            match = LINE_NUMBER_RE.match(line.text)
+            match = LINE_NUMBER_RE.match(line.text) if strip_line_numbers else None
             if match:
                 line_number = int(match.group("number"))
                 content = match.group("content") or ""
@@ -591,42 +600,103 @@ def has_line_numbers(reads: list[LineRead]) -> bool:
     return increasing / total_pairs >= MIN_INCREASING_SHARE
 
 
+def _normalized(text: str) -> str:
+    """Collapse whitespace for frequency counting and fuzzy comparison."""
+    return " ".join(text.split())
+
+
+def _same_line(a: str, b: str) -> bool:
+    """Fuzzy-decide whether two reads show the same on-screen line.
+
+    Comparison only — the texts are never blended, averaged, or repaired.
+    """
+    return fuzz.ratio(_normalized(a), _normalized(b)) >= FUZZY_MATCH_THRESHOLD
+
+
+def _best_read(group: list[LineRead]) -> MergedLine:
+    """Pick a group's best read: frequency, then confidence, then sharpness.
+
+    The most frequent content wins (whitespace-normalized for counting),
+    ties broken by confidence then frame sharpness. The winning read's
+    content is emitted verbatim — reads are never blended. Below
+    ``OCR_UNCERTAIN_CONFIDENCE`` (or with no confidence at all) the line is
+    flagged uncertain.
+    """
+    frequency = Counter(_normalized(read.content) for read in group)
+    top_count = max(frequency.values())
+    finalists = [
+        read for read in group if frequency[_normalized(read.content)] == top_count
+    ]
+    winner = max(
+        finalists,
+        key=lambda read: (
+            read.confidence if read.confidence is not None else -1.0,
+            read.sharpness,
+        ),
+    )
+    uncertain = (
+        winner.confidence is None or winner.confidence < OCR_UNCERTAIN_CONFIDENCE
+    )
+    return MergedLine(read=winner, uncertain=uncertain)
+
+
 def merge_ocr_results(reads: list[LineRead]) -> list[MergedLine]:
     """Consolidate repeated reads of each numbered line into one best read.
 
-    Per line number: the most frequent content wins (whitespace-normalized
-    for counting), ties broken by confidence then frame sharpness. The
-    winning read's content is emitted verbatim — reads are never blended.
-    Below ``OCR_UNCERTAIN_CONFIDENCE`` (or with no confidence at all) the
-    line is flagged uncertain. Gaps in numbering are left as gaps.
+    Reads are grouped by detected line number and each group's winner is
+    chosen by :func:`_best_read`; the result is ordered by line number.
+    Gaps in numbering are left as gaps.
     """
     by_number: dict[int, list[LineRead]] = {}
     for read in reads:
         if read.line_number is not None:
             by_number.setdefault(read.line_number, []).append(read)
+    return [_best_read(by_number[number]) for number in sorted(by_number)]
 
-    merged: list[MergedLine] = []
-    for line_number in sorted(by_number):
-        group = by_number[line_number]
-        frequency = Counter(" ".join(read.content.split()) for read in group)
-        top_count = max(frequency.values())
-        finalists = [
-            read
-            for read in group
-            if frequency[" ".join(read.content.split())] == top_count
-        ]
-        winner = max(
-            finalists,
-            key=lambda read: (
-                read.confidence if read.confidence is not None else -1.0,
-                read.sharpness,
-            ),
-        )
-        uncertain = (
-            winner.confidence is None or winner.confidence < OCR_UNCERTAIN_CONFIDENCE
-        )
-        merged.append(MergedLine(read=winner, uncertain=uncertain))
-    return merged
+
+def _overlap_length(document: list[list[LineRead]], frame_lines: list[LineRead]) -> int:
+    """Longest document suffix whose lines all fuzzy-match the frame's head.
+
+    Tried from the longest candidate down; every aligned pair must match, so
+    an ambiguous alignment yields 0 (keeping a duplicate) rather than a
+    partial merge that could drop a real line.
+    """
+    for overlap in range(min(len(document), len(frame_lines)), 0, -1):
+        start = len(document) - overlap
+        if all(
+            _same_line(frame_lines[index].content, document[start + index][-1].content)
+            for index in range(overlap)
+        ):
+            return overlap
+    return 0
+
+
+def reconstruct_by_time(reads: list[LineRead]) -> list[MergedLine]:
+    """Reconstruct unnumbered code in video-time order, deduplicating scroll.
+
+    Frames are processed in ascending time; within a frame, lines keep their
+    on-screen top-to-bottom order. Each frame's lines are aligned against the
+    tail of the document built so far: the overlapping reads join the
+    existing per-line groups, only the lines past the overlap are appended as
+    new. With no overlap the whole frame is appended — a duplicate is always
+    preferable to a dropped line. Each group's winner is then chosen by
+    :func:`_best_read`, verbatim.
+    """
+    by_frame: dict[int, list[LineRead]] = {}
+    for read in reads:
+        by_frame.setdefault(read.frame_number, []).append(read)
+
+    document: list[list[LineRead]] = []
+    for frame_number in sorted(by_frame):
+        frame_lines = by_frame[frame_number]
+        overlap = _overlap_length(document, frame_lines)
+        start = len(document) - overlap
+        for index, read in enumerate(frame_lines):
+            if index < overlap:
+                document[start + index].append(read)
+            else:
+                document.append([read])
+    return [_best_read(group) for group in document]
 
 
 # --- Outputs ---------------------------------------------------------------
@@ -643,15 +713,15 @@ def _uncertain_marker(read: LineRead) -> str:
 def write_outputs(
     metadata: VideoMetadata,
     rows: list[OCRRow],
-    merged: list[MergedLine] | None,
+    merged: list[MergedLine],
     output: Path,
 ) -> None:
     """Write `metadata_video.json`, `ocr_raw.csv`, and `codigo_extraido.txt`.
 
-    With ``merged`` (line numbers detected), `codigo_extraido.txt` is the
-    consolidated code in line-number order, each uncertain line preceded by
-    its `[OCR_UNCERTAIN]` marker. Without it, the naive time-ordered
-    concatenation is kept (time-based reconstruction is Phase 4).
+    `codigo_extraido.txt` is the reconstructed code — merged by line number
+    when numbers were detected, otherwise time-ordered with scroll duplicates
+    consolidated — each uncertain line preceded by its `[OCR_UNCERTAIN]`
+    marker.
     """
     metadata_path = output / "metadata_video.json"
     metadata_path.write_text(metadata.model_dump_json(indent=2) + "\n", "utf-8")
@@ -669,17 +739,12 @@ def write_outputs(
     )
     frame.to_csv(output / "ocr_raw.csv", index=False)
 
-    if merged is not None:
-        lines: list[str] = []
-        for item in merged:
-            if item.uncertain:
-                lines.append(_uncertain_marker(item.read))
-            lines.append(item.read.content)
-        code = "\n".join(lines)
-    else:
-        # Naive concatenation in video-time order — no merging or synthesis.
-        code = "\n\n".join(row.text for row in ordered)
-    (output / "codigo_extraido.txt").write_text(code + "\n", "utf-8")
+    lines: list[str] = []
+    for item in merged:
+        if item.uncertain:
+            lines.append(_uncertain_marker(item.read))
+        lines.append(item.read.content)
+    (output / "codigo_extraido.txt").write_text("\n".join(lines) + "\n", "utf-8")
 
 
 # --- CLI -------------------------------------------------------------------
@@ -772,20 +837,19 @@ def main(
             "to OCR. Check the crop region and the video quality."
         )
     reads = parse_code_lines(rows)
-    merged: list[MergedLine] | None = None
     if has_line_numbers(reads):
         merged = merge_ocr_results(reads)
-        uncertain = sum(1 for item in merged if item.uncertain)
-        console.print(
-            f"[green]Reconstruction:[/green] line numbers detected — "
-            f"{len(merged)} lines merged from {len(reads)} reads "
-            f"({uncertain} marked [OCR_UNCERTAIN])"
-        )
+        path_taken = "line numbers detected — merged by line number"
     else:
-        console.print(
-            "[green]Reconstruction:[/green] no line numbers detected — "
-            "keeping naive time-ordered concatenation"
-        )
+        reads = parse_code_lines(rows, strip_line_numbers=False)
+        merged = reconstruct_by_time(reads)
+        path_taken = "no line numbers detected — reconstructed by video time"
+    uncertain = sum(1 for item in merged if item.uncertain)
+    console.print(
+        f"[green]Reconstruction:[/green] {path_taken}: "
+        f"{len(merged)} lines from {len(reads)} reads "
+        f"({uncertain} marked [OCR_UNCERTAIN])"
+    )
     write_outputs(metadata, rows, merged, output)
 
     console.print(
