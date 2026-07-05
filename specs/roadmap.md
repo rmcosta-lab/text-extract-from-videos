@@ -17,17 +17,17 @@ pipeline runs before any quality work.
 - ~~Creates the output directory tree; fails clearly if the video is missing or
   the output dir is unwritable.~~
 
-## Phase 1 — Thin vertical slice (walking skeleton) ⭐
+## ~~Phase 1 — Thin vertical slice (walking skeleton)~~ ✅
 Goal: metadata → sample → OCR → raw dump, end to end. **No** merging, line
 reconstruction, or failure report yet.
-- `get_video_metadata()` via `ffprobe`, OpenCV fallback → `metadata_video.json`.
-- `sample_frames()` with a fixed step (adaptive-by-FPS comes later).
-- Define the **OCR engine interface** and the `pytesseract` implementation;
-  `run_ocr()` on the whole frame (or a single hardcoded crop).
-- Write `ocr_raw.csv` (text, frame, time, confidence, frame image path) and a
-  naive concatenated `codigo_extraido.txt`.
-- Save used frames to `frames_usados/`.
-- **Exit criterion:** one real video produces all raw artifacts without crashing.
+- ~~`get_video_metadata()` via `ffprobe`, OpenCV fallback → `metadata_video.json`.~~
+- ~~`sample_frames()` with a fixed step (adaptive-by-FPS comes later).~~
+- ~~Define the **OCR engine interface** and the `pytesseract` implementation;
+  `run_ocr()` on the whole frame (or a single hardcoded crop).~~
+- ~~Write `ocr_raw.csv` (text, frame, time, confidence, frame image path) and a
+  naive concatenated `codigo_extraido.txt`.~~
+- ~~Save used frames to `frames_usados/`.~~
+- ~~**Exit criterion:** one real video produces all raw artifacts without crashing.~~
 
 ## Phase 2 — Frame preprocessing & selection
 - `preprocess_frame()`: grayscale, resize, adaptive/Otsu threshold, sharpen/denoise.
