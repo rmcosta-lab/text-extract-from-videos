@@ -10,12 +10,12 @@ pipeline runs before any quality work.
 
 ---
 
-## Phase 0 — Project skeleton
-- `.venv` + dependency install per README.
-- `extract_code_from_video.py` with a `typer` CLI exposing `--video` and
-  `--output` (crop flags declared, may be unused for now).
-- Creates the output directory tree; fails clearly if the video is missing or
-  the output dir is unwritable.
+## ~~Phase 0 — Project skeleton~~ ✅
+- ~~`.venv` + dependency install per README.~~
+- ~~`extract_code_from_video.py` with a `typer` CLI exposing `--video` and
+  `--output` (crop flags declared, may be unused for now).~~
+- ~~Creates the output directory tree; fails clearly if the video is missing or
+  the output dir is unwritable.~~
 
 ## Phase 1 — Thin vertical slice (walking skeleton) ⭐
 Goal: metadata → sample → OCR → raw dump, end to end. **No** merging, line
