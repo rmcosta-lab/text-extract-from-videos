@@ -1,9 +1,11 @@
 """Extract the source code shown in a screen-recording video via local OCR.
 
-Phase 8: metadata (ffprobe with OpenCV fallback) → segment/crop parameter
-resolution → FPS-adaptive frame sampling inside the effective interval →
-preprocessing (crop → grayscale → upscale → Otsu threshold → denoise) → blur
-and near-duplicate skipping → OCR on the preprocessed frames → reconstruction
+Phase 9: metadata (ffprobe with OpenCV fallback) → segment/crop/engine
+parameter resolution → FPS-adaptive frame sampling inside the effective
+interval → preprocessing (crop → grayscale → upscale → Otsu threshold →
+denoise) → blur and near-duplicate skipping → OCR on the preprocessed frames
+via the engine selected with `--engine` (Tesseract default, PaddleOCR
+optional, both behind the `OCREngine` seam) → reconstruction
 (line-number merge when the editor shows numbers; otherwise video-time order
 with scroll overlap deduplicated via rapidfuzz — best read by frequency /
 confidence / sharpness, `[OCR_UNCERTAIN]` markers on low-confidence lines) →
@@ -26,6 +28,7 @@ import shutil
 import subprocess
 from collections import Counter
 from collections.abc import Iterable, Iterator
+from enum import Enum
 from fractions import Fraction
 from pathlib import Path
 from statistics import median
@@ -481,9 +484,17 @@ class CropBox(BaseModel):
             )
 
 
+class EngineName(str, Enum):
+    """OCR engines selectable via ``--engine``."""
+
+    tesseract = "tesseract"
+    paddle = "paddle"
+
+
 class ExtractionParameters(BaseModel):
     """User-requested and effective extraction controls for one run."""
 
+    engine: EngineName = EngineName.tesseract
     requested_start_time: str | None = None
     requested_end_time: str | None = None
     requested_start_seconds: float | None = None
@@ -543,6 +554,7 @@ def _candidate_frame_window(
 
 def resolve_extraction_parameters(
     *,
+    engine: EngineName,
     crop: CropBox,
     metadata: VideoMetadata,
     start_time: str | None,
@@ -600,6 +612,7 @@ def resolve_extraction_parameters(
     )
     try:
         return ExtractionParameters(
+            engine=engine,
             requested_start_time=start_time,
             requested_end_time=end_time,
             requested_start_seconds=requested_start_seconds,
@@ -873,6 +886,165 @@ class TesseractEngine:
         mean_confidence = _mean_confidence(word.confidence for word in all_words)
         text = "\n".join(line.text for line in lines)
         return OCRResult(text=text, confidence=mean_confidence, lines=lines)
+
+
+def _require_paddleocr() -> Any:
+    """Import paddleocr only when the Paddle engine is instantiated."""
+    try:
+        from paddleocr import PaddleOCR  # type: ignore[import-untyped]  # noqa: PLC0415
+    except ImportError as exc:
+        raise OCREngineUnavailableError(
+            "the paddleocr Python package is not installed. Install it with "
+            "[bold]python -m pip install paddleocr paddlepaddle[/bold], then "
+            "re-run."
+        ) from exc
+    return PaddleOCR
+
+
+def _paddle_confidence(score: Any) -> float | None:
+    """Normalize PaddleOCR's 0..1 recognition score onto the 0..100 scale."""
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        return None
+    return round(value * 100.0, 2) if value >= 0 else None
+
+
+def _paddle_box(points: Any) -> tuple[int, int, int, int]:
+    """Axis-aligned left/top/width/height of one PaddleOCR polygon."""
+    coordinates = (
+        [(float(x), float(y)) for x, y in points] if points is not None else []
+    )
+    if not coordinates:
+        return 0, 0, 0, 0
+    xs = [x for x, _ in coordinates]
+    ys = [y for _, y in coordinates]
+    left = max(0, round(min(xs)))
+    top = max(0, round(min(ys)))
+    width = max(0, round(max(xs)) - left)
+    height = max(0, round(max(ys)) - top)
+    return left, top, width, height
+
+
+def _paddle_detections(page: Any) -> Iterator[tuple[str, Any, Any]]:
+    """Yield (text, score, polygon) from one PaddleOCR page result.
+
+    Handles both the 3.x dict-like results (``rec_texts`` / ``rec_scores`` /
+    ``rec_polys``) and the legacy 2.x ``[polygon, (text, score)]`` lists.
+    """
+    if page is None:
+        return
+    getter = getattr(page, "get", None)
+    if callable(getter):
+        texts = getter("rec_texts")
+        scores = getter("rec_scores")
+        polys = getter("rec_polys")
+        if polys is None:
+            polys = getter("dt_polys")
+        texts = [] if texts is None else list(texts)
+        scores = [] if scores is None else list(scores)
+        polys = [] if polys is None else list(polys)
+        for index, text in enumerate(texts):
+            score = scores[index] if index < len(scores) else None
+            poly = polys[index] if index < len(polys) else None
+            yield str(text), score, poly
+        return
+    for detection in page:
+        if not detection:
+            continue
+        poly, recognition = detection[0], detection[1]
+        yield str(recognition[0]), recognition[1], poly
+
+
+def _paddle_input(image: MatLike) -> MatLike:
+    """PaddleOCR expects 3-channel input; expand preprocessed grayscale frames."""
+    if getattr(image, "ndim", 3) == 2:
+        cv2 = _require_cv2()
+        return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    return image
+
+
+class PaddleOCREngine:
+    """`OCREngine` implementation backed by PaddleOCR.
+
+    Mirrors :class:`TesseractEngine`: paddleocr is imported and referenced
+    exclusively inside this class, and unavailability surfaces as
+    :class:`OCREngineUnavailableError` with an actionable install hint.
+    PaddleOCR reads whole lines, so each detection becomes one
+    :class:`OCRLine` carrying a single line-spanning :class:`OCRWord` —
+    per-word boxes are never fabricated.
+    """
+
+    def __init__(self) -> None:
+        paddle_ocr = _require_paddleocr()
+        try:
+            try:
+                self._reader = paddle_ocr(
+                    lang="en",
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                )
+            except TypeError:
+                self._reader = paddle_ocr(lang="en")
+        except Exception as exc:
+            raise OCREngineUnavailableError(
+                f"PaddleOCR failed to initialize ({exc}). Ensure paddlepaddle "
+                "is installed ([bold]python -m pip install paddleocr "
+                "paddlepaddle[/bold]) and its models are available locally, "
+                "then re-run."
+            ) from exc
+
+    def recognize(self, image: MatLike) -> OCRResult:
+        """OCR the whole image; per-line Paddle reads mapped onto the seam models."""
+        prepared = _paddle_input(image)
+        if hasattr(self._reader, "predict"):
+            pages = self._reader.predict(prepared)
+        else:
+            pages = self._reader.ocr(prepared)
+
+        lines: list[OCRLine] = []
+        for page in pages if pages is not None else []:
+            for text, score, poly in _paddle_detections(page):
+                if not text.strip():
+                    continue
+                confidence = _paddle_confidence(score)
+                left, top, width, height = _paddle_box(poly)
+                word = OCRWord(
+                    text=text,
+                    confidence=confidence,
+                    left=left,
+                    top=top,
+                    width=width,
+                    height=height,
+                )
+                lines.append(
+                    OCRLine(
+                        text=text,
+                        confidence=confidence,
+                        left=left,
+                        top=top,
+                        width=width,
+                        height=height,
+                        words=[word],
+                    )
+                )
+
+        if not lines:
+            return OCRResult(text="", confidence=None, lines=[])
+        lines.sort(
+            key=lambda line: (line.top if line.top is not None else 0, line.left or 0)
+        )
+        mean_confidence = _mean_confidence(line.confidence for line in lines)
+        text = "\n".join(line.text for line in lines)
+        return OCRResult(text=text, confidence=mean_confidence, lines=lines)
+
+
+def create_ocr_engine(name: EngineName) -> OCREngine:
+    """Instantiate the engine selected by ``--engine`` behind the seam."""
+    if name is EngineName.paddle:
+        return PaddleOCREngine()
+    return TesseractEngine()
 
 
 # --- Sampling & OCR pipeline ----------------------------------------------
@@ -1893,6 +2065,13 @@ def main(
             help=f"End timestamp for extraction; accepted forms: {TIMESTAMP_FORMAT_HELP}.",
         ),
     ] = None,
+    engine_name: Annotated[
+        EngineName,
+        typer.Option(
+            "--engine",
+            help="OCR engine used to read the sampled frames.",
+        ),
+    ] = EngineName.tesseract,
 ) -> None:
     """Extract the source code shown in a screen-recording video."""
     if not video.exists():
@@ -1923,6 +2102,7 @@ def main(
 
     step = adaptive_sample_step(metadata.fps)
     parameters = resolve_extraction_parameters(
+        engine=engine_name,
         crop=crop,
         metadata=metadata,
         start_time=start_time,
@@ -1963,7 +2143,7 @@ def main(
         )
 
     try:
-        engine: OCREngine = TesseractEngine()
+        engine = create_ocr_engine(engine_name)
     except OCREngineUnavailableError as exc:
         _fail(str(exc))
 

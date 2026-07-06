@@ -236,16 +236,26 @@ python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \
   --start-time 00:00:10 --end-time 00:00:25.500
 ```
 
+O OCR padrão é o Tesseract. Para usar o PaddleOCR, instale o backend opcional
+(`python -m pip install paddleocr paddlepaddle`) e selecione o engine. O
+`paddlepaddle` ainda não publica wheels para Python 3.14 — use um virtualenv
+com Python ≤ 3.13 para esse engine:
+
+```bash
+python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \
+  --engine paddle
+```
+
 ## Explicação curta da lógica
 
 1. **Metadados** — `ffprobe` lê FPS, duração, resolução, total de frames e
    codec; se o `ffprobe` faltar ou falhar, o OpenCV entra como fallback (com
    aviso). `metadata_video.json` é gravado já nesta etapa, para que mesmo uma
    execução que falhe depois fique inspecionável.
-2. **Parâmetros de extração** — crop e intervalo de tempo (`--start-time` /
-   `--end-time`) são validados contra os metadados do vídeo e gravados em
-   `extraction_parameters.json`, incluindo os valores pedidos e os valores
-   efetivamente usados.
+2. **Parâmetros de extração** — crop, intervalo de tempo (`--start-time` /
+   `--end-time`) e o engine de OCR (`--engine`) são validados contra os
+   metadados do vídeo e gravados em `extraction_parameters.json`, incluindo os
+   valores pedidos e os valores efetivamente usados.
 3. **Amostragem adaptativa** — o passo de amostragem é escolhido pelo FPS
    detectado (30/60/120 fps), gerando cerca de um frame candidato a cada 0,5 s
    em vez de processar todos os frames. Quando há intervalo selecionado, só
@@ -255,9 +265,10 @@ python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \
    convertido para grayscale, ampliado, binarizado (Otsu) e limpo. Frames
    borrados (variância do Laplaciano baixa) e quase duplicados (SSIM alto)
    são descartados; os frames aproveitados são salvos em `frames_usados/`.
-5. **OCR** — o Tesseract (via `pytesseract`, atrás de uma interface trocável
-   por PaddleOCR no futuro) lê cada frame mantido; toda leitura bruta vai para
-   `ocr_raw.csv` com frame, tempo e confiança.
+5. **OCR** — o engine escolhido por `--engine` (Tesseract via `pytesseract`
+   por padrão; PaddleOCR opcional) lê cada frame mantido atrás da mesma
+   interface `OCREngine`; toda leitura bruta vai para `ocr_raw.csv` com frame,
+   tempo e confiança.
 6. **Reconstrução** — se o editor mostra números de linha, as múltiplas
    leituras de cada linha são consolidadas e ordenadas pelo número; sem
    numeração, a ordem é o tempo do vídeo e as duplicatas do scroll são
