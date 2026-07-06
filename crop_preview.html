@@ -12,7 +12,8 @@
     background: Canvas; color: CanvasText; max-width: 1400px; margin-inline: auto;
   }
   h1 { font-size: 1.3rem; margin: 0 0 .25rem; }
-  #meta { opacity: .75; margin: 0 0 1rem; }
+  #meta { opacity: .75; margin: 0 0 .25rem; }
+  #analysis { opacity: .75; margin: 0 0 1rem; font-size: .9rem; }
   form {
     display: flex; flex-wrap: wrap; gap: 1rem; align-items: end;
     padding: 1rem; border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
@@ -65,6 +66,7 @@
 <body>
 <h1>Sugestão de crop</h1>
 <p id="meta">Carregando…</p>
+<p id="analysis" hidden></p>
 
 <form id="controls" autocomplete="off">
   <label>Engine
@@ -145,6 +147,14 @@ function applyPreview(data) {
   $("flags").textContent = data.cli_flags;
   $("meta").textContent = data.video_name + " — frame " + data.frame_index +
     " de referência, " + data.frame_width + " × " + data.frame_height + " px";
+  const analyzed = data.analyzed_frame_indices || [];
+  const withText = data.text_frame_indices || [];
+  const skipped = data.skipped_frame_indices || [];
+  $("analysis").hidden = false;
+  $("analysis").textContent = "Sugestão combinada de " + analyzed.length +
+    " frames analisados (" + withText.length + " informaram a sugestão: " +
+    withText.join(", ") + ")" +
+    (skipped.length ? " — não decodificados: " + skipped.join(", ") : "");
   $("frame-index").textContent = data.frame_index;
   $("original").src = "data:image/png;base64," + data.original_png_base64;
   setCropped(

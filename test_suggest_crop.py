@@ -23,9 +23,14 @@ from extract_code_from_video import (
     OCRWord,
 )
 from suggest_crop import (
+    REFERENCE_FRAME_INDEX,
+    FrameObservation,
     ReferenceFrame,
+    TextGeometry,
     _crop_error,
+    combine_observations,
     create_app,
+    sample_frame_indices,
     suggest_crop,
 )
 
@@ -141,6 +146,153 @@ def test_fallback_clusters_lines_when_no_gutter() -> None:
     assert suggestion.crop == CropBox(left=30, top=40, right=0, bottom=270)
 
 
+def _observation(
+    index: int,
+    *,
+    left: float = 40.0,
+    top: float = 50.0,
+    bottom: float = 160.0,
+    text_right: float = 350.0,
+    noise_left: float | None = None,
+    line_height: float = 10.0,
+    gutter_anchored: bool = False,
+) -> FrameObservation:
+    """A text-bearing observation with the gutter-test geometry as defaults."""
+    return FrameObservation(
+        frame_index=index,
+        text=TextGeometry(
+            left=left,
+            top=top,
+            bottom=bottom,
+            text_right=text_right,
+            noise_left=noise_left,
+            line_height=line_height,
+            gutter_anchored=gutter_anchored,
+        ),
+    )
+
+
+# --- Sampling unit tests ------------------------------------------------------
+
+
+def test_sample_indices_are_evenly_spread() -> None:
+    indices = sample_frame_indices(total_frames=1030, count=5)
+    assert indices == [30, 280, 530, 779, 1029]
+
+
+def test_sample_indices_short_video_falls_back_to_last_frame() -> None:
+    assert sample_frame_indices(total_frames=10, count=5) == [9]
+
+
+def test_sample_indices_count_one_uses_the_reference_frame() -> None:
+    assert sample_frame_indices(total_frames=1030, count=1) == [REFERENCE_FRAME_INDEX]
+
+
+def test_sample_indices_deduplicate_when_video_is_short() -> None:
+    indices = sample_frame_indices(total_frames=34, count=12)
+    assert indices == sorted(set(indices))
+    assert indices[0] == 30 and indices[-1] == 33
+
+
+# --- Combination unit tests ---------------------------------------------------
+
+
+def test_combine_widest_gutter_wins_on_the_left() -> None:
+    # Line numbers grew wider later in the video: frame 500 sees a gutter
+    # starting further left; the combined crop must not cut it. Margin is
+    # max(8, 10) = 10.
+    combined = combine_observations(
+        [_observation(30, left=40), _observation(500, left=25)], 600, 400
+    )
+    assert combined.crop.left == 15
+    assert combined.text_frame_indices == [30, 500]
+
+
+def test_combine_vertical_band_is_the_union() -> None:
+    combined = combine_observations(
+        [_observation(30, top=50, bottom=160), _observation(500, top=80, bottom=300)],
+        600,
+        400,
+    )
+    assert combined.crop.top == 40
+    assert combined.crop.bottom == 400 - 300 - 10
+
+
+def test_combine_noise_column_needs_a_majority() -> None:
+    minority = combine_observations(
+        [
+            _observation(30, noise_left=550),
+            _observation(300),
+            _observation(600),
+        ],
+        600,
+        400,
+    )
+    assert minority.crop.right == 0
+    majority = combine_observations(
+        [
+            _observation(30, noise_left=550),
+            _observation(300, noise_left=560),
+            _observation(600),
+        ],
+        600,
+        400,
+    )
+    assert majority.crop.right == 600 - 560
+
+
+def test_combine_right_cut_never_clips_any_frames_text() -> None:
+    # Both frames see noise at x=500, but frame 600 has code reaching x=550:
+    # the cut moves right so that line is not clipped.
+    combined = combine_observations(
+        [
+            _observation(30, noise_left=500),
+            _observation(600, noise_left=500, text_right=550),
+        ],
+        600,
+        400,
+    )
+    assert combined.crop.right == 600 - 550
+
+
+def test_combine_ignores_empty_frames_and_reports_them() -> None:
+    combined = combine_observations(
+        [FrameObservation(frame_index=30), _observation(500)],
+        600,
+        400,
+        skipped_frame_indices=[999],
+    )
+    assert combined.text_detected is True
+    assert combined.analyzed_frame_indices == [30, 500]
+    assert combined.text_frame_indices == [500]
+    assert combined.skipped_frame_indices == [999]
+
+
+def test_combine_gutter_anchored_frames_outrank_fallback_ones() -> None:
+    # A fallback-cluster frame swept in menu-bar/status-bar chrome (band from
+    # y=2 to the frame bottom, "text" to the right edge). With one gutter
+    # frame present it must not widen the crop; alone, it still informs.
+    chrome = _observation(310, left=5, top=2, bottom=390, text_right=600)
+    anchored = _observation(30, gutter_anchored=True)
+    combined = combine_observations([chrome, anchored], 600, 400)
+    assert combined.text_frame_indices == [30]
+    assert combined.crop == combine_observations([anchored], 600, 400).crop
+    alone = combine_observations([chrome], 600, 400)
+    assert alone.text_frame_indices == [310]
+    assert alone.crop.top == 0
+
+
+def test_combine_all_empty_yields_zero_crop() -> None:
+    combined = combine_observations(
+        [FrameObservation(frame_index=30), FrameObservation(frame_index=500)],
+        600,
+        400,
+    )
+    assert combined.crop == CropBox()
+    assert combined.text_detected is False
+    assert combined.text_frame_indices == []
+
+
 def test_crop_error_reuses_validate_against() -> None:
     assert _crop_error(CropBox(left=10, right=10), 600, 400) is None
     message = _crop_error(CropBox(left=300, right=300), 600, 400)
@@ -155,7 +307,7 @@ def client() -> TestClient:
     if not SAMPLE_VIDEO.is_file():
         pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
     try:
-        app = create_app(SAMPLE_VIDEO, EngineName.tesseract)
+        app = create_app(SAMPLE_VIDEO, EngineName.tesseract, sample_count=3)
     except OCREngineUnavailableError as exc:
         pytest.skip(f"tesseract unavailable: {exc}")
     return TestClient(app)
@@ -182,6 +334,10 @@ def test_preview_returns_valid_suggestion(client: TestClient) -> None:
     cropped_height = data["frame_height"] - crop.top - crop.bottom
     assert _png_size(data["cropped_png_base64"]) == (cropped_width, cropped_height)
     assert f"--crop-left {crop.left}" in data["cli_flags"]
+    assert len(data["analyzed_frame_indices"]) == 3
+    assert data["analyzed_frame_indices"][0] == data["frame_index"]
+    assert set(data["text_frame_indices"]) <= set(data["analyzed_frame_indices"])
+    assert data["skipped_frame_indices"] == []
 
 
 def test_crop_endpoint_recrops_to_requested_box(client: TestClient) -> None:

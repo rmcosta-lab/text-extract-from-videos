@@ -121,6 +121,29 @@ them in a small local web page.
   opens the page, shows a sensible auto-suggested crop for frame 30, and
   editing a value refreshes the cropped preview. `ruff` and `mypy` pass.~~
 
+## Phase 11 — Multi-frame crop analysis
+Goal: make the crop suggestion in `suggest_crop.py` representative of the
+**whole video**, not just frame 30. Code scrolls and line numbers grow wider
+(9 → 10 → 100…), so a single reference frame can suggest a crop that cuts
+digits off the gutter or clips long code lines later in the video.
+- Sample **multiple frames across the video's duration** (reusing the existing
+  frame-reading/preprocessing/OCR seams) and run the crop heuristic on each.
+- Combine the per-frame results into one crop for the entire video:
+  - `--crop-left`: conservative enough that **no sampled frame's line-number
+    gutter is cut** (take the leftmost detected gutter edge).
+  - `--crop-right`: tight enough that **no sampled frame's code text is
+    clipped**, while still excluding the noise column (minimap/scrollbar)
+    when one is consistently detected.
+  - Top/bottom follow the same "never cut detected text" rule across frames.
+- Keep the honesty rules: frames with empty OCR contribute nothing; if no
+  frame yields text, the suggestion stays a zero crop with the explicit
+  "no text detected" notice.
+- The web preview keeps working: show the combined suggestion (and which
+  frames informed it), with the same edit/re-crop flow.
+- **Exit criterion:** against `sample-video/IMG_5430.MOV`, the suggested crop
+  keeps every line number fully visible on the left and no code line clipped
+  on the right across the sampled frames. `ruff` and `mypy` pass.
+
 ## Future (not scheduled)
 - Local vision-language model.
 - Optional LLM review pass that flags — but never fabricates — code.

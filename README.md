@@ -254,9 +254,14 @@ python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \
 
 Antes de processar o vídeo inteiro, use a ferramenta de sugestão de crop para
 descobrir os valores de `--crop-*` que isolam a coluna de números de linha e o
-código. Ela analisa o **frame 30** do vídeo com OCR (Tesseract por padrão),
-sugere o recorte e abre uma página local (`127.0.0.1`) com o frame antes e
-depois do crop:
+código. Ela analisa com OCR (Tesseract por padrão) **vários frames
+distribuídos ao longo do vídeo** (12 por padrão, a partir do frame 30) e
+combina os resultados em um único recorte válido para o vídeo inteiro: o crop
+esquerdo nunca corta a coluna de números mais larga observada (9 → 10 → 100…)
+e o crop direito só remove a coluna de ruído (minimap/scrollbar), sem nunca
+cortar o código de nenhum frame amostrado. A página local (`127.0.0.1`)
+mostra um frame de referência antes e depois do crop e quais frames
+informaram a sugestão:
 
 ```bash
 python suggest_crop.py --video sample-video/IMG_5430.MOV
@@ -265,10 +270,11 @@ python suggest_crop.py --video sample-video/IMG_5430.MOV
 Na página é possível editar os quatro valores (o backend recorta o frame de
 novo e atualiza o preview), trocar o engine (`tesseract`/`paddle`) e copiar a
 string pronta com as flags `--crop-left/--crop-top/--crop-right/--crop-bottom`
-para colar no comando principal. Se o OCR não detectar texto no frame de
-referência, a ferramenta mostra o frame inteiro com crop zero e avisa — ela
-nunca inventa uma região. Opções: `--engine`, `--host`, `--port` e
-`--no-open` (não abrir o navegador automaticamente).
+para colar no comando principal. Frames sem texto não contribuem para a
+sugestão; se o OCR não detectar texto em nenhum frame amostrado, a ferramenta
+mostra o frame inteiro com crop zero e avisa — ela nunca inventa uma região.
+Opções: `--engine`, `--sample-count` (número de frames amostrados), `--host`,
+`--port` e `--no-open` (não abrir o navegador automaticamente).
 
 ## Explicação curta da lógica
 
