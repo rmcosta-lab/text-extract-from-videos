@@ -2,6 +2,7 @@
 
 ## 2026-07-06
 
+- Complete Phase 9 — PaddleOCR backend: add `PaddleOCREngine` implementing `OCREngine.recognize()` behind a lazy `_require_paddleocr()` import with an actionable `OCREngineUnavailableError` install hint, mapping PaddleOCR's per-line boxes and scores into `OCRResult`/`OCRLine`/`OCRWord` (axis-aligned box geometry, score-to-confidence normalization, single-word-per-line since PaddleOCR is line-oriented) so spacing reconstruction and line-number logic keep working unchanged; add an `--engine {tesseract,paddle}` CLI flag selected at the single `OCREngine` instantiation seam via a small factory, with the chosen engine recorded in `extraction_parameters.json`; document the flag and optional `paddleocr`/`paddlepaddle` install in the README; add phase spec (`specs/2026-07-06-paddleocr-backend/`).
 - Complete Phase 8 — segment parameters & real-case extraction review: add `--start-time` and `--end-time` CLI controls with validation for seconds, `MM:SS(.mmm)`, and `HH:MM:SS(.mmm)` formats; sample only frames inside the effective segment while preserving original frame numbers and timestamps; write `extraction_parameters.json` with requested/effective bounds, crop settings, sampling window, and candidate counts; document segment extraction in the README; add real-case review notes and frame-local filtering for isolated impossible OCR line-number glitches without inventing replacements.
 
 ## 2026-07-05

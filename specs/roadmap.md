@@ -83,7 +83,24 @@ reconstruction, or failure report yet.
 - ~~Use frames from a real case in `frames_usados/` to evaluate extraction-quality
   improvements, especially captures where a line is followed by the code text.~~
 
+## ~~Phase 9 — PaddleOCR backend~~ ✅
+Goal: add a second OCR engine behind the existing `OCREngine` seam without
+touching the pipeline that consumes it, then prove it on the sample video.
+- ~~Add `PaddleOCREngine` implementing `OCREngine.recognize(image) -> OCRResult`,
+  with a lazy import and an `OCREngineUnavailableError` mirroring the Tesseract
+  path (clear install hint when `paddleocr` is missing).~~
+- ~~Map PaddleOCR's per-line boxes and scores into `OCRResult` / `OCRLine` /
+  `OCRWord`, preserving geometry so spacing reconstruction and line-number logic
+  keep working. **Never invent code**; low scores → `[OCR_UNCERTAIN]` as today.~~
+- ~~Add an `--engine {tesseract,paddle}` CLI flag (default `tesseract`) that
+  selects the engine at the single instantiation seam; the rest of the pipeline
+  still depends only on `OCREngine`.~~
+- ~~Record the chosen engine in the extraction-parameters JSON.~~
+- ~~**Exit criterion:** `python sample-video/run_sample.py` runs clean on the
+  default engine, and the same run with `--engine paddle` produces the full
+  `saida/` artifact tree; compare the two outputs to confirm PaddleOCR is a
+  drop-in with no pipeline changes. `ruff` and `mypy` pass.~~
+
 ## Future (not scheduled)
-- PaddleOCR backend behind the existing OCR interface.
 - Local vision-language model.
 - Optional LLM review pass that flags — but never fabricates — code.
