@@ -101,6 +101,26 @@ touching the pipeline that consumes it, then prove it on the sample video.
   `saida/` artifact tree; compare the two outputs to confirm PaddleOCR is a
   drop-in with no pipeline changes. `ruff` and `mypy` pass.~~
 
+## Phase 10 — Crop suggestion preview (web)
+Goal: before processing a whole video, automatically suggest crop parameters
+that isolate the line-number gutter + code area, and let the user review/tune
+them in a small local web page.
+- Auto-suggest `--crop-left/-top/-right/-bottom` values for a given video by
+  analyzing **frame 30** as the reference frame.
+- Implement as a **separate script** (own entrypoint), reusing shared pieces by
+  importing from `extract_code_from_video.py` (metadata, frame reading,
+  preprocessing, OCR engine selection) — no duplication of that logic.
+- Serve a local web page showing the reference frame **before and after** the
+  crop, with the suggested crop values displayed so they are easy to copy into
+  the main CLI.
+- Allow editing the crop values in the page; the backend re-crops frame 30 and
+  the page updates with the new preview.
+- Allow choosing the OCR engine used by the suggestion heuristic
+  (`tesseract` default, `paddle` optional) — same engines as the main CLI.
+- **Exit criterion:** running the tool against `sample-video/IMG_5430.MOV`
+  opens the page, shows a sensible auto-suggested crop for frame 30, and
+  editing a value refreshes the cropped preview. `ruff` and `mypy` pass.
+
 ## Future (not scheduled)
 - Local vision-language model.
 - Optional LLM review pass that flags — but never fabricates — code.

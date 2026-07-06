@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sugestão de crop</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 1.5rem; font: 15px/1.5 system-ui, sans-serif;
+    background: Canvas; color: CanvasText; max-width: 1400px; margin-inline: auto;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 .25rem; }
+  #meta { opacity: .75; margin: 0 0 1rem; }
+  form {
+    display: flex; flex-wrap: wrap; gap: 1rem; align-items: end;
+    padding: 1rem; border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+    border-radius: 8px; margin-bottom: 1rem;
+  }
+  label { display: flex; flex-direction: column; gap: .25rem; font-weight: 600; }
+  input[type=number], select {
+    width: 7.5rem; padding: .4rem .5rem; font: inherit;
+    border: 1px solid color-mix(in srgb, CanvasText 35%, transparent);
+    border-radius: 6px; background: Field; color: FieldText;
+  }
+  #flags-row {
+    display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+  code {
+    padding: .45rem .6rem; border-radius: 6px; font-size: .9rem;
+    background: color-mix(in srgb, CanvasText 8%, Canvas);
+    border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  }
+  button {
+    padding: .45rem .9rem; font: inherit; font-weight: 600; cursor: pointer;
+    border: 1px solid color-mix(in srgb, CanvasText 35%, transparent);
+    border-radius: 6px; background: color-mix(in srgb, CanvasText 6%, Canvas);
+    color: CanvasText;
+  }
+  #notice { margin: 0 0 1rem; font-weight: 600; }
+  #notice.error { color: #c0392b; }
+  #notice.info { color: #b9770e; }
+  .previews { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 900px) { .previews { grid-template-columns: 1fr; } }
+  figure { margin: 0; min-width: 0; }
+  figcaption { font-weight: 600; margin-bottom: .4rem; }
+  img {
+    max-width: 100%; height: auto; display: block; border-radius: 6px;
+    border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+  }
+  #busy { opacity: .6; }
+</style>
+</head>
+<body>
+<h1>Sugestão de crop</h1>
+<p id="meta">Carregando…</p>
+
+<form id="controls" autocomplete="off">
+  <label>Engine
+    <select id="engine">
+      <option value="tesseract" selected>tesseract</option>
+      <option value="paddle">paddle</option>
+    </select>
+  </label>
+  <label>Left <input id="left" type="number" min="0" step="1" value="0"></label>
+  <label>Top <input id="top" type="number" min="0" step="1" value="0"></label>
+  <label>Right <input id="right" type="number" min="0" step="1" value="0"></label>
+  <label>Bottom <input id="bottom" type="number" min="0" step="1" value="0"></label>
+  <button type="button" id="resuggest">Voltar à sugestão</button>
+</form>
+
+<div id="flags-row">
+  <code id="flags">—</code>
+  <button type="button" id="copy">Copiar</button>
+  <span id="busy" hidden>processando…</span>
+</div>
+
+<p id="notice" hidden></p>
+
+<div class="previews">
+  <figure>
+    <figcaption>Original (frame <span id="frame-index">?</span>)</figcaption>
+    <img id="original" alt="Frame original">
+  </figure>
+  <figure>
+    <figcaption>Com crop (<span id="cropped-size">?</span>)</figcaption>
+    <img id="cropped" alt="Frame com crop aplicado">
+  </figure>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const edges = ["left", "top", "right", "bottom"];
+let suggested = null;
+let debounceTimer = null;
+
+function setNotice(text, kind) {
+  const el = $("notice");
+  el.hidden = !text;
+  el.textContent = text || "";
+  el.className = kind || "";
+}
+
+function setBusy(busy) { $("busy").hidden = !busy; }
+
+function setCropped(base64, width, height) {
+  $("cropped").src = "data:image/png;base64," + base64;
+  $("cropped-size").textContent = width + " × " + height + " px";
+}
+
+function applyPreview(data) {
+  suggested = data.crop;
+  for (const edge of edges) $(edge).value = data.crop[edge];
+  $("flags").textContent = data.cli_flags;
+  $("meta").textContent = data.video_name + " — frame " + data.frame_index +
+    " de referência, " + data.frame_width + " × " + data.frame_height + " px";
+  $("frame-index").textContent = data.frame_index;
+  $("original").src = "data:image/png;base64," + data.original_png_base64;
+  setCropped(
+    data.cropped_png_base64,
+    data.frame_width - data.crop.left - data.crop.right,
+    data.frame_height - data.crop.top - data.crop.bottom
+  );
+  setNotice(
+    data.text_detected
+      ? ""
+      : "Nenhum texto detectado no frame de referência — mostrando o frame " +
+        "inteiro (crop zero). Nada foi inventado.",
+    "info"
+  );
+}
+
+async function loadPreview() {
+  setBusy(true);
+  setNotice("", "");
+  try {
+    const response = await fetch("/api/preview?engine=" + $("engine").value);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "falha ao gerar a sugestão");
+    applyPreview(data);
+  } catch (err) {
+    setNotice(err.message, "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function recrop() {
+  const body = {};
+  for (const edge of edges) body[edge] = Math.max(0, Number($(edge).value) || 0);
+  setBusy(true);
+  try {
+    const response = await fetch("/api/crop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      const detail = typeof data.detail === "string"
+        ? data.detail : "valores de crop inválidos";
+      throw new Error(detail);
+    }
+    setNotice("", "");
+    $("flags").textContent = data.cli_flags;
+    setCropped(data.cropped_png_base64, data.cropped_width, data.cropped_height);
+  } catch (err) {
+    setNotice(err.message, "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+for (const edge of edges) {
+  $(edge).addEventListener("input", () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(recrop, 400);
+  });
+}
+$("engine").addEventListener("change", loadPreview);
+$("resuggest").addEventListener("click", () => {
+  if (!suggested) return;
+  for (const edge of edges) $(edge).value = suggested[edge];
+  recrop();
+});
+$("copy").addEventListener("click", async () => {
+  await navigator.clipboard.writeText($("flags").textContent);
+  $("copy").textContent = "Copiado!";
+  setTimeout(() => { $("copy").textContent = "Copiar"; }, 1200);
+});
+
+loadPreview();
+</script>
+</body>
+</html>

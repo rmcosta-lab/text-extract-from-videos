@@ -63,6 +63,22 @@ requirement, not an aspiration.
   `ffprobe`/`tesseract` not installed, undetectable FPS, empty OCR, unwritable
   output dir).
 
+## Crop-preview web tool (Phase 10)
+
+- **Backend: FastAPI + uvicorn.** Small local-only server (binds `127.0.0.1`);
+  typed request/response models reuse the project's pydantic convention.
+  Chosen over Flask for native pydantic integration and over a desktop GUI to
+  keep dependencies light.
+- **Frontend: a single static HTML page with vanilla JS** served by FastAPI —
+  no Node, no build step, no framework. The page shows the before/after frame
+  images and a form for the crop values; edits call the backend, which
+  re-crops and returns the updated preview.
+- Frames are exchanged as **base64-encoded PNG** (or served from a temp dir);
+  everything stays offline, consistent with the runtime rule above.
+- The tool is a **separate entrypoint** that imports the shared seams from
+  `extract_code_from_video.py` (metadata, frame reading, preprocessing, OCR
+  engine construction) rather than duplicating them.
+
 ## Quality tooling
 
 - **`ruff`** for linting and formatting.
