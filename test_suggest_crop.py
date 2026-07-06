@@ -92,9 +92,10 @@ def test_gutter_column_anchors_the_crop() -> None:
     )
     assert suggestion.text_detected is True
     # Upscaled box (80..700) x (100..320) maps to (40..350) x (50..160) at
-    # UPSCALE_FACTOR=2; line height 10 -> margin max(8, 10) = 10.
+    # UPSCALE_FACTOR=2; line height 10 -> margin max(8, 10) = 10. The right
+    # edge stays at 0: there is no noise column to remove.
     assert UPSCALE_FACTOR == 2.0
-    assert suggestion.crop == CropBox(left=30, top=40, right=240, bottom=230)
+    assert suggestion.crop == CropBox(left=30, top=40, right=0, bottom=230)
 
 
 def test_text_outside_gutter_band_is_ignored() -> None:
@@ -109,7 +110,7 @@ def test_text_outside_gutter_band_is_ignored() -> None:
     assert with_outlier.crop == without_outlier.crop
 
 
-def test_low_confidence_right_segment_is_trimmed() -> None:
+def test_right_crop_cuts_at_the_noise_column_start() -> None:
     # Minimap-like junk: low confidence, far to the right, inside the band.
     junk = OCRLine(
         text="xx",
@@ -124,7 +125,11 @@ def test_low_confidence_right_segment_is_trimmed() -> None:
     without_junk = suggest_crop(
         _frame(), FakeEngine(OCRResult(text="code", lines=_gutter_lines()))
     )
-    assert with_junk.crop == without_junk.crop
+    # The junk never widens the text box (left/top/bottom are unchanged), and
+    # the right crop removes exactly the noise column: the junk starts at
+    # upscaled x=1100 -> 550 original, so 600 - 550 = 50 pixels are cut.
+    assert with_junk.crop == without_junk.crop.model_copy(update={"right": 50})
+    assert without_junk.crop.right == 0
 
 
 def test_fallback_clusters_lines_when_no_gutter() -> None:
@@ -133,7 +138,7 @@ def test_fallback_clusters_lines_when_no_gutter() -> None:
     assert suggestion.text_detected is True
     # Same geometry as the gutter test but only 4 rows of non-number tokens:
     # band comes from line clustering, (40..350) x (50..120), margin 10.
-    assert suggestion.crop == CropBox(left=30, top=40, right=240, bottom=270)
+    assert suggestion.crop == CropBox(left=30, top=40, right=0, bottom=270)
 
 
 def test_crop_error_reuses_validate_against() -> None:

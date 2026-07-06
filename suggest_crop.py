@@ -289,12 +289,17 @@ def _gutter_column(words: list[WordBox]) -> list[WordBox] | None:
     return best if len(best) >= MIN_GUTTER_WORDS else None
 
 
-def _keep_confident_segments(words: list[WordBox], frame_width: int) -> list[WordBox]:
+def _keep_confident_segments(
+    words: list[WordBox], frame_width: int
+) -> tuple[list[WordBox], float | None]:
     """Split words on wide horizontal gaps; drop low-confidence right segments.
 
     A minimap or scrollbar OCRs as junk far to the right of the code. The
     leftmost segment (gutter + code) is always kept; segments after a gap
-    survive only when their mean confidence does not look like noise.
+    survive only when their mean confidence does not look like noise. Returns
+    the kept words plus the left edge of the first noisy segment (``None``
+    when nothing was dropped) so the crop can cut right where the noise
+    column starts instead of at the end of the code text.
     """
     ordered = sorted(words, key=lambda word: word.left)
     max_gap = frame_width * SEGMENT_GAP_FRACTION
@@ -315,9 +320,9 @@ def _keep_confident_segments(words: list[WordBox], frame_width: int) -> list[Wor
         ]
         mean = sum(confidences) / len(confidences) if confidences else None
         if mean is not None and mean < MIN_SEGMENT_CONFIDENCE:
-            break
+            return kept, min(word.left for word in segment)
         kept = kept + segment
-    return kept
+    return kept, None
 
 
 def suggest_crop(frame: ReferenceFrame, engine: OCREngine) -> CropSuggestion:
@@ -328,8 +333,10 @@ def suggest_crop(frame: ReferenceFrame, engine: OCREngine) -> CropSuggestion:
     mapped down by ``UPSCALE_FACTOR``. The vertical extent is anchored on the
     line-number gutter when one is detected (excluding menu/tab/status rows);
     otherwise it falls back to the largest vertical cluster of text lines.
-    Horizontally, low-confidence segments to the right of the code (minimap,
-    scrollbar) are trimmed. Empty OCR yields a zero crop and
+    The right edge is deliberately conservative: it removes only the
+    low-confidence noise column (minimap, scrollbar), cutting where that
+    column starts — never at the end of the code text, since short lines
+    would make that crop far too aggressive. Empty OCR yields a zero crop and
     ``text_detected=False`` — the suggestion never invents a region.
     """
     processed = preprocess_frame(frame.image, CropBox())
@@ -348,18 +355,17 @@ def suggest_crop(frame: ReferenceFrame, engine: OCREngine) -> CropSuggestion:
         y1 = max(box.bottom for box in cluster)
 
     band = [word for word in words if y0 <= (word.top + word.bottom) / 2 <= y1]
-    kept = _keep_confident_segments(band, frame.width)
+    kept, noise_left = _keep_confident_segments(band, frame.width)
     # With a gutter, nothing left of it belongs to the code (activity bar,
     # breakpoint column); the gutter itself is the true left edge.
     x0 = min(word.left for word in gutter or kept)
-    x1 = max(word.right for word in kept)
 
     median_height = median(word.bottom - word.top for word in kept)
     margin = max(MIN_CROP_MARGIN_PX, round(median_height * CROP_MARGIN_FACTOR))
     crop = CropBox(
         left=max(0, round(x0) - margin),
         top=max(0, round(y0) - margin),
-        right=max(0, frame.width - round(x1) - margin),
+        right=0 if noise_left is None else max(0, frame.width - round(noise_left)),
         bottom=max(0, frame.height - round(y1) - margin),
     )
     return CropSuggestion(crop=crop, text_detected=True)
