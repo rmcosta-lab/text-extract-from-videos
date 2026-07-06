@@ -1,23 +1,26 @@
 """Extract the source code shown in a screen-recording video via local OCR.
 
-Phase 6: metadata (ffprobe with OpenCV fallback) → FPS-adaptive frame sampling
-→ preprocessing (crop → grayscale → upscale → Otsu threshold → denoise) → blur
+Phase 8: metadata (ffprobe with OpenCV fallback) → segment/crop parameter
+resolution → FPS-adaptive frame sampling inside the effective interval →
+preprocessing (crop → grayscale → upscale → Otsu threshold → denoise) → blur
 and near-duplicate skipping → OCR on the preprocessed frames → reconstruction
 (line-number merge when the editor shows numbers; otherwise video-time order
 with scroll overlap deduplicated via rapidfuzz — best read by frequency /
 confidence / sharpness, `[OCR_UNCERTAIN]` markers on low-confidence lines) →
 gap detection on the numbered path (`detect_missing_lines()`) → outputs
-(`metadata_video.json`, `ocr_raw.csv`, `codigo_extraido.txt`,
-`relatorio_falhas.md`, `frames_usados/`). The failure report surfaces every
-discarded frame, missing line, low-confidence passage, and unextractable
-span — gaps are reported, never stitched over. Every named failure mode
-(missing video, missing ffprobe/tesseract, undetectable FPS, empty OCR,
-unwritable output directory) exits with code 1 and an actionable message;
-`metadata_video.json` and `frames_usados/` are written before OCR-dependent
-stages so failed runs stay inspectable.
+(`metadata_video.json`, `extraction_parameters.json`, `ocr_raw.csv`,
+`codigo_extraido.txt`, `relatorio_falhas.md`, `frames_usados/`). The failure
+report surfaces every discarded frame, missing line, low-confidence passage,
+and unextractable span — gaps are reported, never stitched over. Every named
+failure mode (missing video, missing ffprobe/tesseract, undetectable FPS, empty
+OCR, unwritable output directory) exits with code 1 and an actionable message;
+`metadata_video.json`, `extraction_parameters.json`, and `frames_usados/` are
+written before OCR-dependent stages where practical so failed runs stay
+inspectable.
 """
 
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -41,6 +44,9 @@ else:
 
 SAMPLE_STEP_BY_FPS_TIER = {30: 15, 60: 30, 120: 60}
 """Sampling step per FPS tier — roughly one candidate frame every 0.5 s."""
+
+FORCED_SAMPLE_FRAMES = (1, 15)
+"""Original-video frame numbers that are always sampled when inside the segment."""
 
 UPSCALE_FACTOR = 2.0
 """Upscale factor applied to the grayscale frame before thresholding."""
@@ -69,8 +75,8 @@ LINE_NUMBER_ONLY_RE = re.compile(r"^\s*(?P<number>\d{1,5})\s*[:|.]?\s*$")
 LINE_NUMBER_WORD_RE = re.compile(r"^\d{1,5}[:|.]?$")
 """A standalone gutter token in word-level OCR data."""
 
-MIN_NUMBERED_SHARE = 0.6
-"""Numbered reconstruction runs when at least this share of reads has a number."""
+MIN_NUMBERED_SHARE = 0.35
+"""Numbered reconstruction runs when enough reads carry a line number."""
 
 MIN_INCREASING_SHARE = 0.8
 """...and detected numbers are increasing within a frame at least this often."""
@@ -80,6 +86,21 @@ OCR_UNCERTAIN_CONFIDENCE = 60.0
 
 FUZZY_MATCH_THRESHOLD = 85.0
 """rapidfuzz ratio (0-100) at/above which two reads count as the same line."""
+
+MAX_FRAME_LINE_NUMBER_NEIGHBOR_DISTANCE = 30
+"""Reject frame-local line numbers with no nearby numbered OCR evidence."""
+
+TIMESTAMP_FORMAT_HELP = "seconds (12.5), MM:SS(.mmm), or HH:MM:SS(.mmm)"
+"""Accepted CLI timestamp forms for segment bounds."""
+
+SECONDS_ONLY_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
+"""A seconds value such as ``12``, ``12.5``, or ``-1``."""
+
+CLOCK_SECONDS_RE = re.compile(r"^\d+(?:\.\d+)?$")
+"""Seconds component used in colon-delimited timestamps."""
+
+TIMESTAMP_EPSILON = 1e-6
+"""Small tolerance for comparing float timestamps against video duration."""
 
 app = typer.Typer(add_completion=False)
 console = Console()
@@ -144,6 +165,49 @@ def _validation_error_summary(exc: ValidationError) -> str:
         field = ".".join(str(part) for part in error["loc"])
         parts.append(f"{field}: {error['msg']}")
     return "; ".join(parts)
+
+
+def _invalid_timestamp(option_name: str, value: str) -> NoReturn:
+    """Fail with one consistent timestamp-format message."""
+    _fail(
+        f"{option_name} has invalid timestamp value {value!r}. Accepted forms: "
+        f"{TIMESTAMP_FORMAT_HELP}."
+    )
+
+
+def _parse_timestamp(value: str | None, option_name: str) -> float | None:
+    """Parse a CLI timestamp while keeping validation messages actionable."""
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        _invalid_timestamp(option_name, value)
+
+    if SECONDS_ONLY_RE.fullmatch(text):
+        return float(text)
+    if ":" not in text:
+        _invalid_timestamp(option_name, value)
+
+    parts = text.split(":")
+    if len(parts) not in {2, 3}:
+        _invalid_timestamp(option_name, value)
+    if not all(part.isdigit() for part in parts[:-1]):
+        _invalid_timestamp(option_name, value)
+    if not CLOCK_SECONDS_RE.fullmatch(parts[-1]):
+        _invalid_timestamp(option_name, value)
+
+    seconds = float(parts[-1])
+    if seconds >= 60:
+        _invalid_timestamp(option_name, value)
+    if len(parts) == 2:
+        minutes = int(parts[0])
+        return minutes * 60 + seconds
+
+    hours = int(parts[0])
+    minutes = int(parts[1])
+    if minutes >= 60:
+        _invalid_timestamp(option_name, value)
+    return hours * 3600 + minutes * 60 + seconds
 
 
 # --- Data models ---------------------------------------------------------
@@ -417,6 +481,152 @@ class CropBox(BaseModel):
             )
 
 
+class ExtractionParameters(BaseModel):
+    """User-requested and effective extraction controls for one run."""
+
+    requested_start_time: str | None = None
+    requested_end_time: str | None = None
+    requested_start_seconds: float | None = None
+    requested_end_seconds: float | None = None
+    effective_start_seconds: float = Field(ge=0)
+    effective_end_seconds: float | None = None
+    effective_start_time: str
+    effective_end_time: str | None = None
+    start_defaulted: bool
+    end_defaulted: bool
+    duration_seconds_available: float | None = None
+    crop: CropBox
+    sample_step: int = Field(gt=0)
+    sample_start_frame: int = Field(ge=0)
+    sample_end_frame_exclusive: int = Field(ge=0)
+    expected_candidate_frames: int = Field(ge=0)
+    first_candidate_frame: int | None = Field(default=None, ge=0)
+    last_candidate_frame: int | None = Field(default=None, ge=0)
+
+
+def _candidate_frame_window(
+    metadata: VideoMetadata,
+    *,
+    start_seconds: float,
+    end_seconds: float | None,
+    step: int,
+) -> tuple[int, int, int, int | None, int | None]:
+    """Convert effective segment seconds into original-video frame bounds."""
+    start_frame = min(
+        metadata.total_frames,
+        max(0, math.ceil(start_seconds * metadata.fps - TIMESTAMP_EPSILON)),
+    )
+    if end_seconds is None:
+        end_frame_exclusive = metadata.total_frames
+    else:
+        last_inclusive = math.floor(end_seconds * metadata.fps + TIMESTAMP_EPSILON)
+        end_frame_exclusive = min(metadata.total_frames, max(0, last_inclusive + 1))
+    end_frame_exclusive = max(start_frame, end_frame_exclusive)
+
+    frame_span = end_frame_exclusive - start_frame
+    if frame_span <= 0:
+        return start_frame, end_frame_exclusive, 0, None, None
+
+    step_candidate_count = ((frame_span - 1) // step) + 1
+    step_last = start_frame + (step_candidate_count - 1) * step
+    forced = {
+        frame
+        for frame in FORCED_SAMPLE_FRAMES
+        if start_frame <= frame < end_frame_exclusive
+    }
+    extra_forced = {frame for frame in forced if (frame - start_frame) % step != 0}
+    expected = step_candidate_count + len(extra_forced)
+    first = start_frame if expected else None
+    last = max({step_last, *forced}) if expected else None
+    return start_frame, end_frame_exclusive, expected, first, last
+
+
+def resolve_extraction_parameters(
+    *,
+    crop: CropBox,
+    metadata: VideoMetadata,
+    start_time: str | None,
+    end_time: str | None,
+    step: int,
+) -> ExtractionParameters:
+    """Validate CLI segment options and persist the effective run settings."""
+    requested_start_seconds = _parse_timestamp(start_time, "--start-time")
+    requested_end_seconds = _parse_timestamp(end_time, "--end-time")
+
+    start_defaulted = requested_start_seconds is None
+    end_defaulted = requested_end_seconds is None
+    start_seconds = (
+        requested_start_seconds if requested_start_seconds is not None else 0.0
+    )
+    duration_seconds = (
+        metadata.duration_seconds if metadata.duration_seconds > 0 else None
+    )
+    end_seconds = (
+        requested_end_seconds if requested_end_seconds is not None else duration_seconds
+    )
+
+    if start_seconds < 0:
+        _fail(f"--start-time must be non-negative; got {start_seconds:g}.")
+    if requested_end_seconds is not None and requested_end_seconds < 0:
+        _fail(f"--end-time must be non-negative; got {requested_end_seconds:g}.")
+    if (
+        duration_seconds is not None
+        and start_seconds > duration_seconds + TIMESTAMP_EPSILON
+    ):
+        _fail(
+            f"--start-time ({_format_time(start_seconds)}) is beyond the video "
+            f"duration ({_format_time(duration_seconds)})."
+        )
+    if (
+        duration_seconds is not None
+        and end_seconds is not None
+        and end_seconds > duration_seconds + TIMESTAMP_EPSILON
+    ):
+        _fail(
+            f"--end-time ({_format_time(end_seconds)}) is beyond the video "
+            f"duration ({_format_time(duration_seconds)})."
+        )
+    if end_seconds is not None and end_seconds <= start_seconds + TIMESTAMP_EPSILON:
+        _fail(
+            f"--end-time ({_format_time(end_seconds)}) must be greater than "
+            f"--start-time ({_format_time(start_seconds)})."
+        )
+
+    start_frame, end_frame_exclusive, expected, first, last = _candidate_frame_window(
+        metadata,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        step=step,
+    )
+    try:
+        return ExtractionParameters(
+            requested_start_time=start_time,
+            requested_end_time=end_time,
+            requested_start_seconds=requested_start_seconds,
+            requested_end_seconds=requested_end_seconds,
+            effective_start_seconds=round(start_seconds, 3),
+            effective_end_seconds=round(end_seconds, 3)
+            if end_seconds is not None
+            else None,
+            effective_start_time=_format_time(start_seconds),
+            effective_end_time=_format_time(end_seconds)
+            if end_seconds is not None
+            else None,
+            start_defaulted=start_defaulted,
+            end_defaulted=end_defaulted,
+            duration_seconds_available=duration_seconds,
+            crop=crop,
+            sample_step=step,
+            sample_start_frame=start_frame,
+            sample_end_frame_exclusive=end_frame_exclusive,
+            expected_candidate_frames=expected,
+            first_candidate_frame=first,
+            last_candidate_frame=last,
+        )
+    except ValidationError as exc:
+        _fail(f"invalid extraction parameters: {_validation_error_summary(exc)}")
+
+
 class SelectionStats(BaseModel):
     """Counts of sampled frames discarded before OCR (feeds the failure report)."""
 
@@ -679,26 +889,41 @@ def adaptive_sample_step(fps: float) -> int:
 
 
 def sample_frames(
-    video: Path, fps: float, step: int
+    video: Path,
+    metadata: VideoMetadata,
+    parameters: ExtractionParameters,
 ) -> Iterator[tuple[int, float, MatLike]]:
-    """Yield ``(frame_number, time_seconds, image)`` every ``step`` frames."""
+    """Yield sampled frames inside the selected segment on the original timeline."""
     cv2 = _require_cv2()
     capture = cv2.VideoCapture(str(video))
     try:
         if not capture.isOpened():
             _fail(f"cannot open video for decoding: [cyan]{video}[/cyan]")
-        frame_number = 0
-        while True:
+        if parameters.expected_candidate_frames == 0:
+            return
+
+        frame_number = parameters.sample_start_frame
+        if frame_number:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+
+        decoded_any = False
+        while frame_number < parameters.sample_end_frame_exclusive:
             ok, image = capture.read()
             if not ok:
                 break
-            if frame_number % step == 0:
-                yield frame_number, frame_number / fps, image
+            decoded_any = True
+            is_step_candidate = (
+                frame_number - parameters.sample_start_frame
+            ) % parameters.sample_step == 0
+            is_forced_candidate = frame_number in FORCED_SAMPLE_FRAMES
+            if is_step_candidate or is_forced_candidate:
+                yield frame_number, frame_number / metadata.fps, image
             frame_number += 1
-        if frame_number == 0:
+        if not decoded_any:
             _fail(
-                f"video [cyan]{video}[/cyan] opened but zero frames could be "
-                "decoded; it may be corrupt or in an unsupported format."
+                f"video [cyan]{video}[/cyan] opened but no frames could be decoded "
+                "inside the selected segment; it may be corrupt, truncated, or in "
+                "an unsupported format."
             )
     finally:
         capture.release()
@@ -947,6 +1172,33 @@ def _to_line_read(
     )
 
 
+def _filter_frame_line_number_outliers(reads: list[LineRead]) -> list[LineRead]:
+    """Drop implausible frame-local gutter numbers without guessing a repair."""
+    numbered = [read.line_number for read in reads if read.line_number is not None]
+    if len(numbered) < 3:
+        return reads
+
+    filtered: list[LineRead] = []
+    for read in reads:
+        if read.line_number is None:
+            filtered.append(read)
+            continue
+
+        neighbors = [number for number in numbered if number != read.line_number]
+        if not neighbors:
+            filtered.append(read)
+            continue
+        nearest = min(abs(read.line_number - number) for number in neighbors)
+        if nearest <= MAX_FRAME_LINE_NUMBER_NEIGHBOR_DISTANCE:
+            filtered.append(read)
+            continue
+
+        # Preserve the OCR content and provenance, but do not let one isolated
+        # gutter glitch create a fabricated line number or thousands of gaps.
+        filtered.append(read.model_copy(update={"line_number": None}))
+    return filtered
+
+
 def parse_code_lines(
     rows: list[OCRRow], *, strip_line_numbers: bool = True
 ) -> list[LineRead]:
@@ -963,10 +1215,11 @@ def parse_code_lines(
     """
     reads: list[LineRead] = []
     for row in rows:
+        frame_reads: list[LineRead] = []
         frame_lines = [line for line in row.lines if line.text.strip()]
         if not strip_line_numbers:
             for line in frame_lines:
-                reads.append(
+                frame_reads.append(
                     _to_line_read(
                         row,
                         line_number=None,
@@ -974,6 +1227,7 @@ def parse_code_lines(
                         confidence=line.confidence,
                     )
                 )
+            reads.extend(frame_reads)
             continue
 
         code_origin = _code_origin_for_frame(frame_lines)
@@ -997,7 +1251,7 @@ def parse_code_lines(
             if number_only is not None:
                 paired_index = gutter_pairs.get(index)
                 if paired_index is None:
-                    reads.append(
+                    frame_reads.append(
                         _to_line_read(
                             row,
                             line_number=number_only,
@@ -1008,7 +1262,7 @@ def parse_code_lines(
                     continue
 
                 code_line = frame_lines[paired_index]
-                reads.append(
+                frame_reads.append(
                     _to_line_read(
                         row,
                         line_number=number_only,
@@ -1029,7 +1283,7 @@ def parse_code_lines(
             else:
                 line_number = None
                 content = line.text
-            reads.append(
+            frame_reads.append(
                 _to_line_read(
                     row,
                     line_number=line_number,
@@ -1037,13 +1291,14 @@ def parse_code_lines(
                     confidence=line.confidence,
                 )
             )
+        reads.extend(_filter_frame_line_number_outliers(frame_reads))
     return reads
 
 
 def has_line_numbers(reads: list[LineRead]) -> bool:
     """Decide whether the video shows editor line numbers.
 
-    True when most reads carry a leading number (``MIN_NUMBERED_SHARE``) and
+    True when enough reads carry a leading number (``MIN_NUMBERED_SHARE``) and
     those numbers are mostly increasing within each frame
     (``MIN_INCREASING_SHARE``) — guarding against code that merely starts
     with integers.
@@ -1534,6 +1789,12 @@ def write_metadata(metadata: VideoMetadata, output: Path) -> None:
     _write_text_file(metadata_path, metadata.model_dump_json(indent=2) + "\n")
 
 
+def write_extraction_parameters(parameters: ExtractionParameters, output: Path) -> None:
+    """Write the effective extraction settings for reproducible inspection."""
+    parameters_path = output / "extraction_parameters.json"
+    _write_text_file(parameters_path, parameters.model_dump_json(indent=2) + "\n")
+
+
 def write_ocr_raw(rows: list[OCRRow], output: Path) -> None:
     """Write the raw OCR inspection CSV."""
     pd = _require_pandas()
@@ -1568,6 +1829,7 @@ def write_extracted_code(merged: list[MergedLine], output: Path) -> None:
 
 def write_outputs(
     metadata: VideoMetadata,
+    parameters: ExtractionParameters,
     rows: list[OCRRow],
     merged: list[MergedLine],
     report: FailureReport,
@@ -1582,6 +1844,7 @@ def write_outputs(
     directory prepared by `prepare_output_tree()`.
     """
     write_metadata(metadata, output)
+    write_extraction_parameters(parameters, output)
     write_ocr_raw(rows, output)
     write_extracted_code(merged, output)
     write_failure_report(report, output)
@@ -1616,6 +1879,20 @@ def main(
         int | None,
         typer.Option(help="Pixels to crop from the bottom edge before OCR."),
     ] = None,
+    start_time: Annotated[
+        str | None,
+        typer.Option(
+            "--start-time",
+            help=f"Start timestamp for extraction; accepted forms: {TIMESTAMP_FORMAT_HELP}.",
+        ),
+    ] = None,
+    end_time: Annotated[
+        str | None,
+        typer.Option(
+            "--end-time",
+            help=f"End timestamp for extraction; accepted forms: {TIMESTAMP_FORMAT_HELP}.",
+        ),
+    ] = None,
 ) -> None:
     """Extract the source code shown in a screen-recording video."""
     if not video.exists():
@@ -1635,11 +1912,6 @@ def main(
 
     frames_dir = prepare_output_tree(output)
 
-    try:
-        engine: OCREngine = TesseractEngine()
-    except OCREngineUnavailableError as exc:
-        _fail(str(exc))
-
     metadata = get_video_metadata(video)
     console.print(
         f"[green]Video:[/green] {metadata.width}x{metadata.height} @ "
@@ -1650,18 +1922,59 @@ def main(
     crop.validate_against(metadata.width, metadata.height)
 
     step = adaptive_sample_step(metadata.fps)
-    metadata.sampling_strategy = (
-        f"adaptive_fps={_nearest_fps_tier(metadata.fps)},step={step}"
+    parameters = resolve_extraction_parameters(
+        crop=crop,
+        metadata=metadata,
+        start_time=start_time,
+        end_time=end_time,
+        step=step,
     )
-    expected_samples = -(-metadata.total_frames // step)
+    segment_end = parameters.effective_end_time or "video_end_unknown"
+    metadata.sampling_strategy = (
+        f"adaptive_fps={_nearest_fps_tier(metadata.fps)},step={step},"
+        f"segment={parameters.effective_start_time}-{segment_end}"
+    )
     console.print(
         f"[green]Sampling:[/green] {metadata.sampling_strategy} "
-        f"(~{expected_samples} candidate frames)"
+        f"(~{parameters.expected_candidate_frames} candidate frames)"
+    )
+    console.print(
+        f"[green]Segment:[/green] frames "
+        f"{parameters.first_candidate_frame if parameters.first_candidate_frame is not None else 'none'}"
+        f"→{parameters.last_candidate_frame if parameters.last_candidate_frame is not None else 'none'} "
+        f"on the original video timeline"
     )
     write_metadata(metadata, output)
+    write_extraction_parameters(parameters, output)
 
-    frames = sample_frames(video, metadata.fps, step)
-    rows, stats, outcomes = run_ocr(frames, engine, frames_dir, expected_samples, crop)
+    if parameters.expected_candidate_frames == 0:
+        stats = SelectionStats()
+        report = FailureReport(
+            video_path=str(video),
+            metadata=metadata,
+            stats=stats,
+            lines_extracted=0,
+            line_numbers_detected=False,
+        )
+        write_outputs(metadata, parameters, [], [], report, output)
+        _fail(
+            "the selected segment contains no frame timestamps to sample. "
+            "Choose a wider interval or align the segment to visible video frames."
+        )
+
+    try:
+        engine: OCREngine = TesseractEngine()
+    except OCREngineUnavailableError as exc:
+        _fail(str(exc))
+
+    frames = sample_frames(video, metadata, parameters)
+    rows, stats, outcomes = run_ocr(
+        frames,
+        engine,
+        frames_dir,
+        parameters.expected_candidate_frames,
+        crop,
+    )
     console.print(
         f"[green]Selection:[/green] {stats.frames_sampled} frames sampled, "
         f"{stats.frames_kept} kept, {stats.frames_discarded_blurry} discarded "
@@ -1676,7 +1989,7 @@ def main(
             line_numbers_detected=False,
             unextractable=unextractable_sections(outcomes),
         )
-        write_outputs(metadata, rows, [], report, output)
+        write_outputs(metadata, parameters, rows, [], report, output)
         _fail(
             "every sampled frame was discarded by selection "
             f"({stats.frames_discarded_blurry} blurry, "
@@ -1694,7 +2007,7 @@ def main(
             line_numbers_detected=False,
             unextractable=unextractable_sections(outcomes),
         )
-        write_outputs(metadata, rows, [], report, output)
+        write_outputs(metadata, parameters, rows, [], report, output)
         _fail(
             f"OCR ran on {len(rows)} frame(s) but recognized no text in any "
             "of them. Inspect "
@@ -1732,7 +2045,7 @@ def main(
         uncertain_lines=[item for item in merged if item.uncertain],
         unextractable=unextractable_sections(outcomes),
     )
-    write_outputs(metadata, rows, merged, report, output)
+    write_outputs(metadata, parameters, rows, merged, report, output)
 
     console.print(
         f"[green]Report:[/green] {len(missing)} missing lines, "
@@ -1743,7 +2056,8 @@ def main(
     console.print(
         f"[green]Done:[/green] {len(rows)} frames OCR'd ({non_empty} with "
         f"text). Outputs in [cyan]{output}[/cyan]: codigo_extraido.txt, "
-        "relatorio_falhas.md, ocr_raw.csv, metadata_video.json, frames_usados/"
+        "relatorio_falhas.md, ocr_raw.csv, metadata_video.json, "
+        "extraction_parameters.json, frames_usados/"
     )
 
 

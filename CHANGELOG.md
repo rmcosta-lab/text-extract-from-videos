@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-07-06
+
+- Complete Phase 8 — segment parameters & real-case extraction review: add `--start-time` and `--end-time` CLI controls with validation for seconds, `MM:SS(.mmm)`, and `HH:MM:SS(.mmm)` formats; sample only frames inside the effective segment while preserving original frame numbers and timestamps; write `extraction_parameters.json` with requested/effective bounds, crop settings, sampling window, and candidate counts; document segment extraction in the README; add real-case review notes and frame-local filtering for isolated impossible OCR line-number glitches without inventing replacements.
+
 ## 2026-07-05
 
 - Complete Phase 7 — deep-review fidelity fixes: preserve OCR spacing and indentation using word geometry, improve gutter/code line-number pairing for real editor captures, support separator forms like `12:print(...)` and `12|print(...)`, lazy-load heavy dependencies so `--help` and dependency errors stay actionable, validate video metadata invariants with Pydantic constraints, clear stale `frames_usados/` artifacts per run, write inspectable CSV/code/report artifacts on empty OCR, and clarify output ownership through `prepare_output_tree()` plus full-tree `write_outputs()`; add phase spec (`specs/2026-07-05-deep-review-fidelity-fixes/`); ignore local `saida/`, `sample-video/`, and `.DS_Store` artifacts.
