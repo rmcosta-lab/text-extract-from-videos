@@ -23,7 +23,11 @@ python -m pip install \
   scikit-image \
   pytesseract \
   typer \
-  pydantic
+  pydantic \
+  fastapi \
+  uvicorn \
+  httpx \
+  pytest
 
   Quero que você gere um script Python completo, robusto e executável localmente para extrair código-fonte a partir de um vídeo de gravação de tela.
 
@@ -245,6 +249,26 @@ com Python ≤ 3.13 para esse engine:
 python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \
   --engine paddle
 ```
+
+## Sugestão de crop com preview web (`suggest_crop.py`)
+
+Antes de processar o vídeo inteiro, use a ferramenta de sugestão de crop para
+descobrir os valores de `--crop-*` que isolam a coluna de números de linha e o
+código. Ela analisa o **frame 30** do vídeo com OCR (Tesseract por padrão),
+sugere o recorte e abre uma página local (`127.0.0.1`) com o frame antes e
+depois do crop:
+
+```bash
+python suggest_crop.py --video sample-video/IMG_5430.MOV
+```
+
+Na página é possível editar os quatro valores (o backend recorta o frame de
+novo e atualiza o preview), trocar o engine (`tesseract`/`paddle`) e copiar a
+string pronta com as flags `--crop-left/--crop-top/--crop-right/--crop-bottom`
+para colar no comando principal. Se o OCR não detectar texto no frame de
+referência, a ferramenta mostra o frame inteiro com crop zero e avisa — ela
+nunca inventa uma região. Opções: `--engine`, `--host`, `--port` e
+`--no-open` (não abrir o navegador automaticamente).
 
 ## Explicação curta da lógica
 
