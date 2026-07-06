@@ -23,6 +23,7 @@ inspectable.
 
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -976,6 +977,9 @@ class PaddleOCREngine:
     """
 
     def __init__(self) -> None:
+        # Keep cached-model runs offline: skip PaddleX's model-hoster
+        # connectivity probe unless the user explicitly re-enables it.
+        os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
         paddle_ocr = _require_paddleocr()
         try:
             try:
