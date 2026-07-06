@@ -50,6 +50,15 @@
     max-width: 100%; height: auto; display: block; border-radius: 6px;
     border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
   }
+  .frame-wrap {
+    position: relative; border-radius: 6px; overflow: hidden;
+    border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+  }
+  .frame-wrap img { border: none; border-radius: 0; }
+  #crop-outline {
+    position: absolute; pointer-events: none; border: 2px solid #e74c3c;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, .45);
+  }
   #busy { opacity: .6; }
 </style>
 </head>
@@ -81,8 +90,12 @@
 
 <div class="previews">
   <figure>
-    <figcaption>Original (frame <span id="frame-index">?</span>)</figcaption>
-    <img id="original" alt="Frame original">
+    <figcaption>Original (frame <span id="frame-index">?</span>) — o retângulo
+      marca a área mantida</figcaption>
+    <div class="frame-wrap">
+      <img id="original" alt="Frame original">
+      <div id="crop-outline" hidden></div>
+    </div>
   </figure>
   <figure>
     <figcaption>Com crop (<span id="cropped-size">?</span>)</figcaption>
@@ -95,6 +108,7 @@
 const $ = (id) => document.getElementById(id);
 const edges = ["left", "top", "right", "bottom"];
 let suggested = null;
+let frameSize = null;
 let debounceTimer = null;
 
 function setNotice(text, kind) {
@@ -106,6 +120,18 @@ function setNotice(text, kind) {
 
 function setBusy(busy) { $("busy").hidden = !busy; }
 
+function updateOutline() {
+  const outline = $("crop-outline");
+  if (!frameSize) { outline.hidden = true; return; }
+  const pct = (value, total) =>
+    (Math.max(0, Number(value) || 0) / total * 100) + "%";
+  outline.style.left = pct($("left").value, frameSize.width);
+  outline.style.right = pct($("right").value, frameSize.width);
+  outline.style.top = pct($("top").value, frameSize.height);
+  outline.style.bottom = pct($("bottom").value, frameSize.height);
+  outline.hidden = false;
+}
+
 function setCropped(base64, width, height) {
   $("cropped").src = "data:image/png;base64," + base64;
   $("cropped-size").textContent = width + " × " + height + " px";
@@ -113,7 +139,9 @@ function setCropped(base64, width, height) {
 
 function applyPreview(data) {
   suggested = data.crop;
+  frameSize = { width: data.frame_width, height: data.frame_height };
   for (const edge of edges) $(edge).value = data.crop[edge];
+  updateOutline();
   $("flags").textContent = data.cli_flags;
   $("meta").textContent = data.video_name + " — frame " + data.frame_index +
     " de referência, " + data.frame_width + " × " + data.frame_height + " px";
@@ -176,6 +204,7 @@ async function recrop() {
 
 for (const edge of edges) {
   $(edge).addEventListener("input", () => {
+    updateOutline();
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(recrop, 400);
   });
@@ -184,6 +213,7 @@ $("engine").addEventListener("change", loadPreview);
 $("resuggest").addEventListener("click", () => {
   if (!suggested) return;
   for (const edge of edges) $(edge).value = suggested[edge];
+  updateOutline();
   recrop();
 });
 $("copy").addEventListener("click", async () => {
