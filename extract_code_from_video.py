@@ -19,23 +19,25 @@ stages so failed runs stay inspectable.
 
 import json
 import re
+import shutil
 import subprocess
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from fractions import Fraction
 from pathlib import Path
-from typing import Annotated, Literal, NoReturn, Protocol
+from statistics import median
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol, TypeAlias
 
-import cv2
-import pandas as pd
-import pytesseract  # type: ignore[import-untyped]
 import typer
-from cv2.typing import MatLike
 from pydantic import BaseModel, Field, ValidationError
 from rapidfuzz import fuzz
 from rich.console import Console
 from rich.progress import track
-from skimage.metrics import structural_similarity
+
+if TYPE_CHECKING:
+    from cv2.typing import MatLike
+else:
+    MatLike: TypeAlias = object
 
 SAMPLE_STEP_BY_FPS_TIER = {30: 15, 60: 30, 120: 60}
 """Sampling step per FPS tier — roughly one candidate frame every 0.5 s."""
@@ -55,8 +57,17 @@ SSIM_THRESHOLD = 0.98
 SSIM_COMPARE_WIDTH = 256
 """Frames are shrunk to this width before SSIM, for speed."""
 
-LINE_NUMBER_RE = re.compile(r"^\s*(?P<number>\d{1,5})[:.|]?(?: (?P<content>.*))?$")
-"""Leading editor line number: bounded digits, optional separator, then content."""
+LINE_NUMBER_RE = re.compile(
+    r"^\s*(?P<number>\d{1,5})(?:(?P<punct_gap>\s*[:|.])"
+    r"(?P<punct_content>.*)|(?P<space_content>[ \t]+.*))$"
+)
+"""Leading editor line number followed by whitespace, colon, pipe, or dot."""
+
+LINE_NUMBER_ONLY_RE = re.compile(r"^\s*(?P<number>\d{1,5})\s*[:|.]?\s*$")
+"""A gutter-only OCR line, possibly with a trailing separator."""
+
+LINE_NUMBER_WORD_RE = re.compile(r"^\d{1,5}[:|.]?$")
+"""A standalone gutter token in word-level OCR data."""
 
 MIN_NUMBERED_SHARE = 0.6
 """Numbered reconstruction runs when at least this share of reads has a number."""
@@ -86,21 +97,93 @@ def _warn(message: str) -> None:
     err_console.print(f"[bold yellow]Warning:[/bold yellow] {message}")
 
 
+def _require_cv2() -> Any:
+    """Import OpenCV only when video/image processing actually needs it."""
+    try:
+        import cv2  # noqa: PLC0415
+    except ImportError:
+        _fail(
+            "OpenCV is required to read video frames and preprocess images. "
+            "Install it with [bold]python -m pip install opencv-python[/bold], "
+            "then re-run."
+        )
+    return cv2
+
+
+def _require_pandas() -> Any:
+    """Import pandas only when writing `ocr_raw.csv`."""
+    try:
+        import pandas as pd  # type: ignore[import-untyped]  # noqa: PLC0415
+    except ImportError:
+        _fail(
+            "pandas is required to write ocr_raw.csv. Install it with "
+            "[bold]python -m pip install pandas[/bold], then re-run."
+        )
+    return pd
+
+
+def _require_structural_similarity() -> Any:
+    """Import scikit-image SSIM only when duplicate-frame detection runs."""
+    try:
+        from skimage.metrics import (  # type: ignore[import-untyped]  # noqa: PLC0415
+            structural_similarity,
+        )
+    except ImportError:
+        _fail(
+            "scikit-image is required for near-duplicate frame detection. "
+            "Install it with [bold]python -m pip install scikit-image[/bold], "
+            "then re-run."
+        )
+    return structural_similarity
+
+
+def _validation_error_summary(exc: ValidationError) -> str:
+    """Compact Pydantic validation errors into one CLI-friendly sentence."""
+    parts: list[str] = []
+    for error in exc.errors():
+        field = ".".join(str(part) for part in error["loc"])
+        parts.append(f"{field}: {error['msg']}")
+    return "; ".join(parts)
+
+
 # --- Data models ---------------------------------------------------------
 
 
 class VideoMetadata(BaseModel):
     """Metadata of the input video plus the sampling strategy of the run."""
 
-    fps: float
-    duration_seconds: float
-    width: int
-    height: int
-    total_frames: int
+    fps: float = Field(gt=0)
+    duration_seconds: float = Field(gt=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    total_frames: int = Field(gt=0)
     codec: str | None = None
     source: Literal["ffprobe", "opencv"]
     sampling_strategy: str = ""
     """Set by `main()` once the adaptive step is chosen from the detected FPS."""
+
+
+class InvalidVideoMetadataError(RuntimeError):
+    """Raised when probed video metadata violates required invariants."""
+
+
+def _build_video_metadata(**values: Any) -> VideoMetadata:
+    """Construct metadata and turn Pydantic detail into an actionable error."""
+    try:
+        return VideoMetadata(**values)
+    except ValidationError as exc:
+        raise InvalidVideoMetadataError(_validation_error_summary(exc)) from exc
+
+
+class OCRWord(BaseModel):
+    """One word-level OCR token with geometry for conservative spacing."""
+
+    text: str
+    confidence: float | None = None
+    left: int = Field(ge=0)
+    top: int = Field(ge=0)
+    width: int = Field(ge=0)
+    height: int = Field(ge=0)
 
 
 class OCRLine(BaseModel):
@@ -108,6 +191,12 @@ class OCRLine(BaseModel):
 
     text: str
     confidence: float | None = None
+    left: int | None = None
+    top: int | None = None
+    width: int | None = None
+    height: int | None = None
+    words: list[OCRWord] = Field(default_factory=list)
+    """Word-level evidence used to preserve spacing and pair gutter/code OCR."""
 
 
 class OCRResult(BaseModel):
@@ -222,33 +311,39 @@ def _metadata_from_ffprobe(video: Path) -> VideoMetadata | None:
     fps = _parse_rate(stream.get("avg_frame_rate")) or _parse_rate(
         stream.get("r_frame_rate")
     )
-    width = stream.get("width")
-    height = stream.get("height")
     try:
+        width = int(stream.get("width"))
+        height = int(stream.get("height"))
         duration = float(
             stream.get("duration") or payload.get("format", {}).get("duration") or 0
         )
-    except ValueError:
-        duration = 0.0
-    if not fps or not width or not height or duration <= 0:
+    except (TypeError, ValueError):
+        _warn("ffprobe metadata is incomplete; falling back to OpenCV.")
+        return None
+    if not fps or duration <= 0:
         _warn("ffprobe metadata is incomplete; falling back to OpenCV.")
         return None
 
     nb_frames = str(stream.get("nb_frames", ""))
     total_frames = int(nb_frames) if nb_frames.isdigit() else round(duration * fps)
-    return VideoMetadata(
-        fps=fps,
-        duration_seconds=round(duration, 3),
-        width=int(width),
-        height=int(height),
-        total_frames=total_frames,
-        codec=stream.get("codec_name"),
-        source="ffprobe",
-    )
+    try:
+        return _build_video_metadata(
+            fps=fps,
+            duration_seconds=round(duration, 3),
+            width=width,
+            height=height,
+            total_frames=total_frames,
+            codec=stream.get("codec_name"),
+            source="ffprobe",
+        )
+    except InvalidVideoMetadataError as exc:
+        _warn(f"ffprobe metadata is invalid ({exc}); falling back to OpenCV.")
+        return None
 
 
 def _metadata_from_opencv(video: Path) -> VideoMetadata:
     """Read FPS / frame count / resolution via OpenCV (codec best-effort)."""
+    cv2 = _require_cv2()
     capture = cv2.VideoCapture(str(video))
     try:
         if not capture.isOpened():
@@ -272,15 +367,21 @@ def _metadata_from_opencv(video: Path) -> VideoMetadata:
             "".join(chr((fourcc >> shift) & 0xFF) for shift in (0, 8, 16, 24)).strip()
             or None
         )
-    return VideoMetadata(
-        fps=fps,
-        duration_seconds=round(total_frames / fps, 3),
-        width=width,
-        height=height,
-        total_frames=total_frames,
-        codec=codec,
-        source="opencv",
-    )
+    try:
+        return _build_video_metadata(
+            fps=fps,
+            duration_seconds=round(total_frames / fps, 3),
+            width=width,
+            height=height,
+            total_frames=total_frames,
+            codec=codec,
+            source="opencv",
+        )
+    except InvalidVideoMetadataError as exc:
+        _fail(
+            f"OpenCV returned invalid metadata for [cyan]{video}[/cyan]: {exc}. "
+            "The video may be corrupt or in an unsupported format."
+        )
 
 
 def get_video_metadata(video: Path) -> VideoMetadata:
@@ -340,11 +441,13 @@ def apply_crop(image: MatLike, crop: CropBox) -> MatLike:
 
 def _cropped_grayscale(image: MatLike, crop: CropBox) -> MatLike:
     """Crop then convert to grayscale — the input to selection and preprocessing."""
+    cv2 = _require_cv2()
     return cv2.cvtColor(apply_crop(image, crop), cv2.COLOR_BGR2GRAY)
 
 
 def preprocess_frame(image: MatLike, crop: CropBox) -> MatLike:
     """Prepare a frame for OCR: crop → grayscale → upscale → threshold → denoise."""
+    cv2 = _require_cv2()
     gray = _cropped_grayscale(image, crop)
     upscaled = cv2.resize(
         gray, None, fx=UPSCALE_FACTOR, fy=UPSCALE_FACTOR, interpolation=cv2.INTER_CUBIC
@@ -358,6 +461,7 @@ def preprocess_frame(image: MatLike, crop: CropBox) -> MatLike:
 
 def frame_sharpness(gray_image: MatLike) -> float:
     """Laplacian variance — the sharpness score for the blur gate and merging."""
+    cv2 = _require_cv2()
     return float(cv2.Laplacian(gray_image, cv2.CV_64F).var())
 
 
@@ -368,6 +472,7 @@ def is_frame_blurry(sharpness: float) -> bool:
 
 def _ssim_thumbnail(gray_image: MatLike) -> MatLike:
     """Shrink a grayscale frame for fast SSIM (min 7 px, skimage's window size)."""
+    cv2 = _require_cv2()
     height, width = gray_image.shape[:2]
     thumb_height = max(7, round(height * SSIM_COMPARE_WIDTH / width))
     return cv2.resize(
@@ -388,6 +493,102 @@ class OCREngine(Protocol):
     def recognize(self, image: MatLike) -> OCRResult: ...
 
 
+def _require_pytesseract() -> Any:
+    """Import pytesseract only when the Tesseract engine is instantiated."""
+    try:
+        import pytesseract  # type: ignore[import-untyped]  # noqa: PLC0415
+    except ImportError as exc:
+        raise OCREngineUnavailableError(
+            "the pytesseract Python package is not installed. Install it with "
+            "[bold]python -m pip install pytesseract[/bold], then re-run."
+        ) from exc
+    return pytesseract
+
+
+def _parse_tesseract_int(value: object) -> int:
+    """Parse integer-ish Tesseract fields, defaulting invalid geometry to 0."""
+    try:
+        return max(0, int(float(str(value))))
+    except ValueError:
+        return 0
+
+
+def _parse_tesseract_confidence(value: object) -> float | None:
+    """Parse a Tesseract confidence value; `-1` means no confidence."""
+    try:
+        confidence = float(str(value))
+    except ValueError:
+        return None
+    return confidence if confidence >= 0 else None
+
+
+def _mean_confidence(values: Iterable[float | None]) -> float | None:
+    """Mean of present confidence values, rounded for stable artifacts."""
+    present = [value for value in values if value is not None]
+    return round(sum(present) / len(present), 2) if present else None
+
+
+def _word_right(word: OCRWord) -> int:
+    """Right edge of one OCR word bounding box."""
+    return word.left + word.width
+
+
+def _line_right(line: OCRLine) -> int | None:
+    """Right edge of one OCR line bounding box when geometry is available."""
+    if line.left is None or line.width is None:
+        return None
+    return line.left + line.width
+
+
+def _median_char_width(words: list[OCRWord]) -> float:
+    """Estimate character width from OCR word boxes for spacing reconstruction."""
+    widths = [
+        word.width / len(word.text) for word in words if word.text and word.width > 0
+    ]
+    return max(1.0, float(median(widths))) if widths else 8.0
+
+
+def _reconstruct_words(words: list[OCRWord], *, origin_left: int | None = None) -> str:
+    """Rebuild a line from word boxes, preserving measured spaces only."""
+    ordered = sorted(words, key=lambda word: word.left)
+    if not ordered:
+        return ""
+
+    char_width = _median_char_width(ordered)
+    origin = ordered[0].left if origin_left is None else origin_left
+    pieces: list[str] = []
+    first_gap = ordered[0].left - origin
+    if first_gap > char_width * 0.75:
+        pieces.append(" " * max(0, round(first_gap / char_width)))
+
+    cursor = _word_right(ordered[0])
+    pieces.append(ordered[0].text)
+    for word in ordered[1:]:
+        gap = word.left - cursor
+        if gap > char_width * 0.5:
+            pieces.append(" " * max(1, round(gap / char_width)))
+        pieces.append(word.text)
+        cursor = max(cursor, _word_right(word))
+    return "".join(pieces)
+
+
+def _build_ocr_line(words: list[OCRWord], *, origin_left: int | None) -> OCRLine:
+    """Build one line model with geometry and evidence-preserving text."""
+    left = min(word.left for word in words)
+    top = min(word.top for word in words)
+    right = max(_word_right(word) for word in words)
+    bottom = max(word.top + word.height for word in words)
+    return OCRLine(
+        text=_reconstruct_words(words, origin_left=origin_left),
+        confidence=_mean_confidence(word.confidence for word in words),
+        left=left,
+        top=top,
+        width=right - left,
+        height=bottom - top,
+        words=sorted(words, key=lambda word: word.left),
+    )
+
+
 class TesseractEngine:
     """`OCREngine` implementation backed by pytesseract / Tesseract.
 
@@ -396,9 +597,10 @@ class TesseractEngine:
     """
 
     def __init__(self) -> None:
+        self._pytesseract = _require_pytesseract()
         try:
-            pytesseract.get_tesseract_version()
-        except pytesseract.TesseractNotFoundError as exc:
+            self._pytesseract.get_tesseract_version()
+        except self._pytesseract.TesseractNotFoundError as exc:
             raise OCREngineUnavailableError(
                 "the tesseract binary is not installed. Install it with "
                 "[bold]brew install tesseract[/bold] (macOS) or your system "
@@ -407,39 +609,58 @@ class TesseractEngine:
 
     def recognize(self, image: MatLike) -> OCRResult:
         """OCR the whole image; per-line reads with mean word confidence each."""
-        data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
-        words_by_line: dict[tuple[int, int, int], list[str]] = {}
-        confs_by_line: dict[tuple[int, int, int], list[float]] = {}
+        data = self._pytesseract.image_to_data(
+            image,
+            config="-c preserve_interword_spaces=1",
+            output_type=self._pytesseract.Output.DICT,
+        )
+        words_by_line: dict[tuple[int, int, int], list[OCRWord]] = {}
         words = zip(
             data["text"],
             data["conf"],
             data["block_num"],
             data["par_num"],
             data["line_num"],
+            data["left"],
+            data["top"],
+            data["width"],
+            data["height"],
             strict=True,
         )
-        for word, conf, block, paragraph, line in words:
+        for word, conf, block, paragraph, line, left, top, width, height in words:
             if not word.strip():
                 continue
-            key = (block, paragraph, line)
-            words_by_line.setdefault(key, []).append(word)
-            confidence = float(conf)
-            if confidence >= 0:
-                confs_by_line.setdefault(key, []).append(confidence)
-
-        lines: list[OCRLine] = []
-        for key, parts in words_by_line.items():
-            confs = confs_by_line.get(key, [])
-            lines.append(
-                OCRLine(
-                    text=" ".join(parts),
-                    confidence=round(sum(confs) / len(confs), 2) if confs else None,
+            key = (
+                _parse_tesseract_int(block),
+                _parse_tesseract_int(paragraph),
+                _parse_tesseract_int(line),
+            )
+            words_by_line.setdefault(key, []).append(
+                OCRWord(
+                    text=str(word),
+                    confidence=_parse_tesseract_confidence(conf),
+                    left=_parse_tesseract_int(left),
+                    top=_parse_tesseract_int(top),
+                    width=_parse_tesseract_int(width),
+                    height=_parse_tesseract_int(height),
                 )
             )
-        all_confs = [c for confs in confs_by_line.values() for c in confs]
-        mean_confidence = (
-            round(sum(all_confs) / len(all_confs), 2) if all_confs else None
+
+        all_words = [
+            word for words_in_line in words_by_line.values() for word in words_in_line
+        ]
+        if not all_words:
+            return OCRResult(text="", confidence=None, lines=[])
+
+        origin_left = min(word.left for word in all_words)
+        lines = [
+            _build_ocr_line(words_in_line, origin_left=origin_left)
+            for words_in_line in words_by_line.values()
+        ]
+        lines.sort(
+            key=lambda line: (line.top if line.top is not None else 0, line.left or 0)
         )
+        mean_confidence = _mean_confidence(word.confidence for word in all_words)
         text = "\n".join(line.text for line in lines)
         return OCRResult(text=text, confidence=mean_confidence, lines=lines)
 
@@ -461,6 +682,7 @@ def sample_frames(
     video: Path, fps: float, step: int
 ) -> Iterator[tuple[int, float, MatLike]]:
     """Yield ``(frame_number, time_seconds, image)`` every ``step`` frames."""
+    cv2 = _require_cv2()
     capture = cv2.VideoCapture(str(video))
     try:
         if not capture.isOpened():
@@ -510,6 +732,8 @@ def run_ocr(
     rows: list[OCRRow] = []
     stats = SelectionStats()
     outcomes: list[FrameOutcome] = []
+    cv2 = _require_cv2()
+    structural_similarity = _require_structural_similarity()
 
     def record_outcome(frame_number: int, time_seconds: float, usable: bool) -> None:
         outcomes.append(
@@ -571,38 +795,246 @@ def run_ocr(
 # --- Reconstruction --------------------------------------------------------
 
 
+def _split_numbered_text(text: str) -> tuple[int, str] | None:
+    """Split text that begins with an editor gutter number plus separator."""
+    match = LINE_NUMBER_RE.match(text)
+    if not match:
+        return None
+
+    number = int(match.group("number"))
+    punct_content = match.group("punct_content")
+    if punct_content is not None:
+        return number, punct_content
+
+    space_content = match.group("space_content") or ""
+    # In the plain form (`12 print(...)`), one whitespace character is the
+    # separator; additional spaces are evidence of indentation.
+    return number, space_content[1:]
+
+
+def _number_only_line_number(text: str) -> int | None:
+    """Return the gutter number from a number-only OCR line, if present."""
+    match = LINE_NUMBER_ONLY_RE.match(text)
+    return int(match.group("number")) if match else None
+
+
+def _line_center_y(line: OCRLine) -> float | None:
+    """Vertical center of an OCR line when geometry is available."""
+    if line.top is None or line.height is None:
+        return None
+    return line.top + line.height / 2
+
+
+def _content_words_after_gutter(line: OCRLine) -> list[OCRWord] | None:
+    """Return word boxes after a standalone gutter token, if the line has one."""
+    if len(line.words) < 2:
+        return None
+    if not LINE_NUMBER_WORD_RE.match(line.words[0].text.strip()):
+        return None
+
+    index = 1
+    while index < len(line.words) and line.words[index].text.strip() in {":", "|", "."}:
+        index += 1
+    return line.words[index:]
+
+
+def _code_origin_for_frame(lines: list[OCRLine]) -> int | None:
+    """Left edge of the code column inferred from word geometry in one frame."""
+    origins: list[int] = []
+    for line in lines:
+        content_words = _content_words_after_gutter(line)
+        if content_words:
+            origins.append(content_words[0].left)
+            continue
+        if _number_only_line_number(line.text) is not None:
+            continue
+        if _split_numbered_text(line.text) is not None:
+            continue
+        if line.left is not None:
+            origins.append(line.left)
+    return min(origins) if origins else None
+
+
+def _line_content_from_words(line: OCRLine, code_origin: int | None) -> str:
+    """Render one code OCR line from word boxes when possible."""
+    if line.words:
+        return _reconstruct_words(line.words, origin_left=code_origin)
+    return line.text
+
+
+def _content_from_numbered_line(
+    line: OCRLine, fallback_content: str, code_origin: int | None
+) -> str:
+    """Extract content after a gutter number, preferring positional evidence."""
+    content_words = _content_words_after_gutter(line)
+    if content_words is not None:
+        return _reconstruct_words(content_words, origin_left=code_origin)
+    return fallback_content
+
+
+def _combined_confidence(*values: float | None) -> float | None:
+    """Mean confidence for paired OCR lines."""
+    return _mean_confidence(values)
+
+
+def _find_paired_code_line(
+    gutter_index: int, lines: list[OCRLine], paired_code_lines: set[int]
+) -> int | None:
+    """Find code text OCR'd separately from a gutter-only line number."""
+    gutter = lines[gutter_index]
+    gutter_center = _line_center_y(gutter)
+    gutter_right = _line_right(gutter)
+    candidates: list[tuple[float, int, int, int]] = []
+
+    for index, line in enumerate(lines):
+        if index == gutter_index or index in paired_code_lines:
+            continue
+        if not line.text.strip():
+            continue
+        if _number_only_line_number(line.text) is not None:
+            continue
+        if _split_numbered_text(line.text) is not None:
+            continue
+        if (
+            gutter_right is not None
+            and line.left is not None
+            and line.left <= gutter_right
+        ):
+            continue
+        if (
+            gutter.left is not None
+            and line.left is not None
+            and line.left <= gutter.left
+        ):
+            continue
+
+        line_center = _line_center_y(line)
+        if gutter_center is None or line_center is None:
+            if abs(index - gutter_index) > 1:
+                continue
+            vertical_distance = 0.0
+        else:
+            vertical_distance = abs(line_center - gutter_center)
+            max_height = max(gutter.height or 0, line.height or 0, 12)
+            if vertical_distance > max(8.0, max_height * 0.75):
+                continue
+
+        candidates.append(
+            (vertical_distance, abs(index - gutter_index), line.left or 10**9, index)
+        )
+
+    if not candidates:
+        return None
+    return min(candidates)[-1]
+
+
+def _to_line_read(
+    row: OCRRow,
+    *,
+    line_number: int | None,
+    content: str,
+    confidence: float | None,
+) -> LineRead:
+    """Build a line read while copying frame provenance from its OCR row."""
+    return LineRead(
+        line_number=line_number,
+        content=content,
+        frame_number=row.frame_number,
+        time_seconds=row.time_seconds,
+        time_formatted=row.time_formatted,
+        confidence=confidence,
+        sharpness=row.sharpness,
+    )
+
+
 def parse_code_lines(
     rows: list[OCRRow], *, strip_line_numbers: bool = True
 ) -> list[LineRead]:
     """Split each frame read into per-line reads, extracting leading line numbers.
 
-    A read that matches ``LINE_NUMBER_RE`` has its number and separator
-    stripped, keeping the content's own indentation; anything else keeps its
-    full text with ``line_number=None``. Fully blank reads are dropped.
+    Numbered reads can be plain (`12 print(...)`), colon/pipe separated
+    (`12:print(...)`, `12|print(...)`), or split into neighboring OCR lines
+    where the gutter number and code text have separate boxes. Content is
+    reconstructed from word geometry when available so indentation and
+    meaningful intra-line spacing survive the OCR stage.
+
     With ``strip_line_numbers=False`` every line keeps its full text — used by
     the unnumbered path so code that merely starts with an integer is not cut.
     """
     reads: list[LineRead] = []
     for row in rows:
-        for line in row.lines:
+        frame_lines = [line for line in row.lines if line.text.strip()]
+        if not strip_line_numbers:
+            for line in frame_lines:
+                reads.append(
+                    _to_line_read(
+                        row,
+                        line_number=None,
+                        content=line.text,
+                        confidence=line.confidence,
+                    )
+                )
+            continue
+
+        code_origin = _code_origin_for_frame(frame_lines)
+        paired_code_lines: set[int] = set()
+        gutter_pairs: dict[int, int] = {}
+        for index, line in enumerate(frame_lines):
+            if _number_only_line_number(line.text) is None:
+                continue
+            pair = _find_paired_code_line(index, frame_lines, paired_code_lines)
+            if pair is not None:
+                gutter_pairs[index] = pair
+                paired_code_lines.add(pair)
+
+        for index, line in enumerate(frame_lines):
+            if index in paired_code_lines:
+                continue
             if not line.text.strip():
                 continue
-            match = LINE_NUMBER_RE.match(line.text) if strip_line_numbers else None
-            if match:
-                line_number = int(match.group("number"))
-                content = match.group("content") or ""
+
+            number_only = _number_only_line_number(line.text)
+            if number_only is not None:
+                paired_index = gutter_pairs.get(index)
+                if paired_index is None:
+                    reads.append(
+                        _to_line_read(
+                            row,
+                            line_number=number_only,
+                            content="",
+                            confidence=line.confidence,
+                        )
+                    )
+                    continue
+
+                code_line = frame_lines[paired_index]
+                reads.append(
+                    _to_line_read(
+                        row,
+                        line_number=number_only,
+                        content=_line_content_from_words(code_line, code_origin),
+                        confidence=_combined_confidence(
+                            line.confidence, code_line.confidence
+                        ),
+                    )
+                )
+                continue
+
+            split = _split_numbered_text(line.text)
+            if split:
+                line_number, fallback_content = split
+                content = _content_from_numbered_line(
+                    line, fallback_content, code_origin
+                )
             else:
                 line_number = None
                 content = line.text
             reads.append(
-                LineRead(
+                _to_line_read(
+                    row,
                     line_number=line_number,
                     content=content,
-                    frame_number=row.frame_number,
-                    time_seconds=row.time_seconds,
-                    time_formatted=row.time_formatted,
                     confidence=line.confidence,
-                    sharpness=row.sharpness,
                 )
             )
     return reads
@@ -919,6 +1351,14 @@ def _uncertain_entry(item: MergedLine) -> str:
     )
 
 
+def _write_text_file(path: Path, content: str) -> None:
+    """Write a text output file, naming the path on permission failures."""
+    try:
+        path.write_text(content, "utf-8")
+    except OSError as exc:
+        _fail(f"cannot write output file [cyan]{path}[/cyan]: {exc}")
+
+
 def write_failure_report(report: FailureReport, output: Path) -> None:
     """Render `relatorio_falhas.md` in Portuguese, one section per README item.
 
@@ -1031,10 +1471,48 @@ def write_failure_report(report: FailureReport, output: Path) -> None:
         )
 
     report_path = output / "relatorio_falhas.md"
-    report_path.write_text("\n".join(lines) + "\n", "utf-8")
+    _write_text_file(report_path, "\n".join(lines) + "\n")
 
 
 # --- Outputs ---------------------------------------------------------------
+
+
+def _clear_frames_dir(frames_dir: Path) -> None:
+    """Remove stale frame artifacts so `frames_usados/` is run-scoped."""
+    for child in frames_dir.iterdir():
+        try:
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+        except OSError as exc:
+            _fail(f"cannot remove stale frame artifact [cyan]{child}[/cyan]: {exc}")
+
+
+def prepare_output_tree(output: Path) -> Path:
+    """Create the output tree, verify writability, and clear stale frames."""
+    try:
+        output.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _fail(f"cannot create output directory [cyan]{output}[/cyan]: {exc}")
+    if not output.is_dir():
+        _fail(f"output path is not a directory: [cyan]{output}[/cyan]")
+
+    frames_dir = output / "frames_usados"
+    try:
+        frames_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _fail(f"cannot create frames directory [cyan]{frames_dir}[/cyan]: {exc}")
+
+    probe = output / ".write_probe"
+    try:
+        probe.touch()
+        probe.unlink()
+    except OSError as exc:
+        _fail(f"output directory [cyan]{output}[/cyan] is not writable: {exc}")
+
+    _clear_frames_dir(frames_dir)
+    return frames_dir
 
 
 def _uncertain_marker(read: LineRead) -> str:
@@ -1053,24 +1531,12 @@ def write_metadata(metadata: VideoMetadata, output: Path) -> None:
     for inspection.
     """
     metadata_path = output / "metadata_video.json"
-    metadata_path.write_text(metadata.model_dump_json(indent=2) + "\n", "utf-8")
+    _write_text_file(metadata_path, metadata.model_dump_json(indent=2) + "\n")
 
 
-def write_outputs(
-    metadata: VideoMetadata,
-    rows: list[OCRRow],
-    merged: list[MergedLine],
-    output: Path,
-) -> None:
-    """Write `metadata_video.json`, `ocr_raw.csv`, and `codigo_extraido.txt`.
-
-    `codigo_extraido.txt` is the reconstructed code — merged by line number
-    when numbers were detected, otherwise time-ordered with scroll duplicates
-    consolidated — each uncertain line preceded by its `[OCR_UNCERTAIN]`
-    marker.
-    """
-    write_metadata(metadata, output)
-
+def write_ocr_raw(rows: list[OCRRow], output: Path) -> None:
+    """Write the raw OCR inspection CSV."""
+    pd = _require_pandas()
     ordered = sorted(rows, key=lambda row: row.time_seconds)
     frame = pd.DataFrame(
         {
@@ -1082,14 +1548,43 @@ def write_outputs(
             "frame_image_path": [row.frame_image_path for row in ordered],
         }
     )
-    frame.to_csv(output / "ocr_raw.csv", index=False)
+    csv_path = output / "ocr_raw.csv"
+    try:
+        frame.to_csv(csv_path, index=False)
+    except OSError as exc:
+        _fail(f"cannot write output file [cyan]{csv_path}[/cyan]: {exc}")
 
+
+def write_extracted_code(merged: list[MergedLine], output: Path) -> None:
+    """Write reconstructed code, preserving uncertainty markers."""
     lines: list[str] = []
     for item in merged:
         if item.uncertain:
             lines.append(_uncertain_marker(item.read))
         lines.append(item.read.content)
-    (output / "codigo_extraido.txt").write_text("\n".join(lines) + "\n", "utf-8")
+    body = "\n".join(lines)
+    _write_text_file(output / "codigo_extraido.txt", f"{body}\n" if body else "")
+
+
+def write_outputs(
+    metadata: VideoMetadata,
+    rows: list[OCRRow],
+    merged: list[MergedLine],
+    report: FailureReport,
+    output: Path,
+) -> None:
+    """Write the run's JSON, CSV, code, and Markdown report artifacts.
+
+    `codigo_extraido.txt` is the reconstructed code — merged by line number
+    when numbers were detected, otherwise time-ordered with scroll duplicates
+    consolidated — each uncertain line preceded by its `[OCR_UNCERTAIN]`
+    marker. Frame images are produced by `run_ocr()` inside the run-scoped
+    directory prepared by `prepare_output_tree()`.
+    """
+    write_metadata(metadata, output)
+    write_ocr_raw(rows, output)
+    write_extracted_code(merged, output)
+    write_failure_report(report, output)
 
 
 # --- CLI -------------------------------------------------------------------
@@ -1138,18 +1633,7 @@ def main(
     except ValidationError:
         _fail("crop values must be non-negative integers.")
 
-    frames_dir = output / "frames_usados"
-    try:
-        frames_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        _fail(f"cannot create output directory [cyan]{output}[/cyan]: {exc}")
-
-    probe = output / ".write_probe"
-    try:
-        probe.touch()
-        probe.unlink()
-    except OSError as exc:
-        _fail(f"output directory [cyan]{output}[/cyan] is not writable: {exc}")
+    frames_dir = prepare_output_tree(output)
 
     try:
         engine: OCREngine = TesseractEngine()
@@ -1184,19 +1668,40 @@ def main(
         f"as blurry, {stats.frames_discarded_duplicate} as near-duplicate"
     )
     if not rows:
+        report = FailureReport(
+            video_path=str(video),
+            metadata=metadata,
+            stats=stats,
+            lines_extracted=0,
+            line_numbers_detected=False,
+            unextractable=unextractable_sections(outcomes),
+        )
+        write_outputs(metadata, rows, [], report, output)
         _fail(
             "every sampled frame was discarded by selection "
             f"({stats.frames_discarded_blurry} blurry, "
             f"{stats.frames_discarded_duplicate} near-duplicate) — nothing "
-            "to OCR. Check the crop region and the video quality."
+            "to OCR. Inspect ocr_raw.csv, codigo_extraido.txt, and "
+            "relatorio_falhas.md, then check the crop region and video quality."
         )
     reads = parse_code_lines(rows)
     if not reads:
+        report = FailureReport(
+            video_path=str(video),
+            metadata=metadata,
+            stats=stats,
+            lines_extracted=0,
+            line_numbers_detected=False,
+            unextractable=unextractable_sections(outcomes),
+        )
+        write_outputs(metadata, rows, [], report, output)
         _fail(
             f"OCR ran on {len(rows)} frame(s) but recognized no text in any "
-            "of them. The frames passed to OCR are in "
-            f"[cyan]{frames_dir}[/cyan] and the metadata in "
-            f"[cyan]{output / 'metadata_video.json'}[/cyan] for inspection. "
+            "of them. Inspect "
+            f"[cyan]{output / 'ocr_raw.csv'}[/cyan], "
+            f"[cyan]{output / 'codigo_extraido.txt'}[/cyan], "
+            f"[cyan]{output / 'relatorio_falhas.md'}[/cyan], and the frames "
+            f"in [cyan]{frames_dir}[/cyan]. "
             "Check that the crop region contains the code, and consider a "
             "larger editor font, a higher recording resolution, or a "
             "high-contrast editor theme."
@@ -1215,7 +1720,6 @@ def main(
         f"{len(merged)} lines from {len(reads)} reads "
         f"({uncertain} marked [OCR_UNCERTAIN])"
     )
-    write_outputs(metadata, rows, merged, output)
 
     missing = detect_missing_lines(merged)
     report = FailureReport(
@@ -1228,7 +1732,7 @@ def main(
         uncertain_lines=[item for item in merged if item.uncertain],
         unextractable=unextractable_sections(outcomes),
     )
-    write_failure_report(report, output)
+    write_outputs(metadata, rows, merged, report, output)
 
     console.print(
         f"[green]Report:[/green] {len(missing)} missing lines, "

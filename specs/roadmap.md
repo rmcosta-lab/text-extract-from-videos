@@ -58,6 +58,24 @@ reconstruction, or failure report yet.
 - ~~`rich` logging/progress throughout.~~
 - ~~Short logic explanation + example command in the README.~~
 
+## ~~Phase 7 — Deep-review fidelity fixes~~ ✅
+- ~~Preserve code spacing and indentation from OCR instead of rebuilding lines
+  with single-space word joins.~~
+- ~~Improve line-number reconstruction for real editor captures where gutter
+  numbers and code text may be OCR'd as separate blocks/lines.~~
+- ~~Keep the CLI usable for `--help` and actionable dependency errors even when
+  heavy runtime dependencies like OpenCV are missing.~~
+- ~~Broaden line-number parsing to handle common OCR/editor forms such as
+  `12:print(...)` or `12|print(...)`.~~
+- ~~Ensure `frames_usados/` contains only frames from the current run, avoiding
+  stale images from previous executions.~~
+- ~~On empty OCR, still write inspectable artifacts such as `ocr_raw.csv`,
+  `codigo_extraido.txt`, and `relatorio_falhas.md` before exiting.~~
+- ~~Add basic Pydantic constraints for metadata invariants such as positive FPS,
+  dimensions, and frame counts.~~
+- ~~Clarify the output-writing seam: either `write_outputs()` writes the full
+  output tree or it is renamed to reflect the narrower core-output role.~~
+
 ## Future (not scheduled)
 - PaddleOCR backend behind the existing OCR interface.
 - Local vision-language model.
