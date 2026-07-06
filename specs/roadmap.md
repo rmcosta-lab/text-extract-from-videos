@@ -76,6 +76,13 @@ reconstruction, or failure report yet.
 - ~~Clarify the output-writing seam: either `write_outputs()` writes the full
   output tree or it is renamed to reflect the narrower core-output role.~~
 
+## ~~Phase 8 — Segment parameters & real-case extraction review~~ ✅
+- ~~Add CLI parameters to select the video start and end time used for extraction.~~
+- ~~Record the effective extraction parameters in a JSON file inside the output
+  directory.~~
+- ~~Use frames from a real case in `frames_usados/` to evaluate extraction-quality
+  improvements, especially captures where a line is followed by the code text.~~
+
 ## Future (not scheduled)
 - PaddleOCR backend behind the existing OCR interface.
 - Local vision-language model.
