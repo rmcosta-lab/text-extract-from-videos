@@ -8,11 +8,11 @@ operates on pydantic models, mirroring the FakeEngine approach proven in
 from pathlib import Path
 
 import pytest
-import typer
 
 from extract_code_from_video import (
     EngineName,
     FrameOutcome,
+    InvalidExtractionParameterError,
     LineRead,
     MergedLine,
     MissingLine,
@@ -100,7 +100,7 @@ def test_parse_timestamp_accepts_all_documented_forms() -> None:
 
 @pytest.mark.parametrize("value", ["abc", "1:2:3:4", "01:75", "01:75:00"])
 def test_parse_timestamp_rejects_invalid_forms(value: str) -> None:
-    with pytest.raises(typer.Exit):
+    with pytest.raises(InvalidExtractionParameterError):
         _parse_timestamp(value, "--start-time")
 
 

@@ -24,7 +24,7 @@ import threading
 import webbrowser
 from pathlib import Path
 from statistics import median
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 import typer
 import uvicorn
@@ -39,23 +39,21 @@ from extract_code_from_video import (
     UPSCALE_FACTOR,
     CropBox,
     EngineName,
+    InvalidExtractionParameterError,
+    MatLike,
     OCREngine,
     OCREngineUnavailableError,
     OCRLine,
     OCRResult,
-    _fail,
-    _require_cv2,
+    apply_crop,
     console,
     create_ocr_engine,
+    fail,
     get_video_metadata,
     preprocess_frame,
+    require_cv2,
     resolve_extraction_parameters,
 )
-
-if TYPE_CHECKING:
-    from cv2.typing import MatLike
-else:
-    type MatLike = object
 
 REFERENCE_FRAME_INDEX = 30
 """First sampled frame and preview reference (falls back to the last frame)."""
@@ -145,10 +143,10 @@ class CropSuggestion(BaseModel):
 
     crop: CropBox
     text_detected: bool
-    analyzed_frame_indices: list[int] = []
-    text_frame_indices: list[int] = []
+    analyzed_frame_indices: list[int] = Field(default_factory=list)
+    text_frame_indices: list[int] = Field(default_factory=list)
     """Frames whose detected text informed the combined crop."""
-    skipped_frame_indices: list[int] = []
+    skipped_frame_indices: list[int] = Field(default_factory=list)
     """Sampled indices that could not be decoded from the video."""
 
 
@@ -167,7 +165,7 @@ class SampledFrames(BaseModel):
     """The decoded sample frames; the first one doubles as the preview frame."""
 
     frames: list[ReferenceFrame] = Field(min_length=1)
-    failed_indices: list[int] = []
+    failed_indices: list[int] = Field(default_factory=list)
 
 
 class SampleFrameThumbnail(BaseModel):
@@ -257,7 +255,7 @@ def read_sampled_frames(
     ``failed_indices`` and skipped; only a video where *no* sampled frame
     decodes is an error.
     """
-    cv2 = _require_cv2()
+    cv2 = require_cv2()
     metadata = get_video_metadata(video)
     # Engine and crop are just recorded by the extraction parameters; only
     # the validated frame window is consumed here.
@@ -315,9 +313,12 @@ def _line_boxes(lines: list[OCRLine]) -> list[TextBox]:
             top = min(word.top for word in line.words)
             right = max(word.left + word.width for word in line.words)
             bottom = max(word.top + word.height for word in line.words)
-        elif None not in (line.left, line.top, line.width, line.height):
-            assert line.left is not None and line.top is not None
-            assert line.width is not None and line.height is not None
+        elif (
+            line.left is not None
+            and line.top is not None
+            and line.width is not None
+            and line.height is not None
+        ):
             left, top = line.left, line.top
             right, bottom = line.left + line.width, line.top + line.height
         else:
@@ -585,20 +586,17 @@ def cli_flags(crop: CropBox) -> str:
 
 
 def _crop_error(crop: CropBox, width: int, height: int) -> str | None:
-    """Reuse `CropBox.validate_against`, converting its CLI exit into a message."""
+    """Reuse `CropBox.validate_against`, keeping the CLI message verbatim."""
     try:
         crop.validate_against(width, height)
-    except typer.Exit:
-        return (
-            f"crop leaves no image area for a {width}x{height} frame: "
-            f"left + right must stay below {width} and top + bottom below {height}."
-        )
+    except InvalidExtractionParameterError as exc:
+        return _plain(str(exc))
     return None
 
 
 def _png_bytes(image: MatLike) -> bytes:
     """Encode an image as PNG bytes."""
-    cv2 = _require_cv2()
+    cv2 = require_cv2()
     ok, buffer = cv2.imencode(".png", image)
     if not ok:
         raise RuntimeError("could not encode the preview image as PNG.")
@@ -612,19 +610,12 @@ def _png_base64(image: MatLike) -> str:
 
 def _thumbnail(image: MatLike, width: int = THUMBNAIL_WIDTH) -> MatLike:
     """Downscale a frame to thumbnail width (no-op when already narrower)."""
-    cv2 = _require_cv2()
+    cv2 = require_cv2()
     full_height, full_width = image.shape[:2]
     if full_width <= width:
         return image
     height = max(1, round(full_height * width / full_width))
     return cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
-
-
-def _apply_crop_view(frame: ReferenceFrame, crop: CropBox) -> MatLike:
-    """Slice the reference frame to the crop box (same semantics as the CLI)."""
-    return frame.image[
-        crop.top : frame.height - crop.bottom, crop.left : frame.width - crop.right
-    ]
 
 
 def create_app(
@@ -701,7 +692,7 @@ def create_app(
             crop=suggestion.crop,
             cli_flags=cli_flags(suggestion.crop),
             original_png_base64=original_png,
-            cropped_png_base64=_png_base64(_apply_crop_view(frame, suggestion.crop)),
+            cropped_png_base64=_png_base64(apply_crop(frame.image, suggestion.crop)),
         )
 
     @app.post("/api/crop")
@@ -715,7 +706,7 @@ def create_app(
         error = _crop_error(crop, frame.width, frame.height)
         if error is not None:
             raise HTTPException(status_code=422, detail=error)
-        cropped = _apply_crop_view(frame, crop)
+        cropped = apply_crop(frame.image, crop)
         return CropResponse(
             crop=crop,
             cli_flags=cli_flags(crop),
@@ -764,11 +755,15 @@ def main(
 ) -> None:
     """Serve a local page to preview and fine-tune crop values for VIDEO."""
     if not video.is_file():
-        _fail(f"video file not found: [cyan]{video}[/cyan]")
+        fail(f"video file not found: [cyan]{video}[/cyan]")
     try:
         app = create_app(video, engine, sample_count, start_time, end_time)
-    except (ReferenceFrameError, OCREngineUnavailableError) as exc:
-        _fail(str(exc))
+    except (
+        ReferenceFrameError,
+        OCREngineUnavailableError,
+        InvalidExtractionParameterError,
+    ) as exc:
+        fail(str(exc))
 
     url = f"http://{host}:{port}/"
     if open_browser:
@@ -776,7 +771,7 @@ def main(
     try:
         uvicorn.run(app, host=host, port=port, log_level="warning")
     except OSError as exc:
-        _fail(f"could not start the server on {url} ({exc}); try another --port.")
+        fail(f"could not start the server on {url} ({exc}); try another --port.")
 
 
 if __name__ == "__main__":
