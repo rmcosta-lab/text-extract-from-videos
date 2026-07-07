@@ -1,221 +1,92 @@
 # text-extract-from-videos
 
-> 🔒 **Locked spec.** This README is the canonical specification for the tool's
-> behavior and deliverables. Change it deliberately, not casually. The project
-> constitution lives in [`specs/`](specs/):
+Ferramenta local (sem APIs externas) que reconstrói o código-fonte a partir de
+um vídeo de gravação de tela onde o código é rolado verticalmente.
+
+## Conceito
+
+O script identifica o FPS real do vídeo (30/60/120), amostra frames de forma
+adaptativa, pré-processa cada frame (grayscale, resize, binarização, remoção de
+borrões e quase-duplicatas) e roda OCR para extrair o texto. Quando o editor
+mostra números de linha, as múltiplas leituras de cada linha são consolidadas e
+ordenadas pelo número, com detecção de linhas faltantes; sem numeração, a ordem
+vem do tempo do vídeo e as duplicatas do scroll são removidas por similaridade
+fuzzy. O código nunca é inventado: trechos de baixa confiança recebem o marcador
+`# [OCR_UNCERTAIN]` e um `relatorio_falhas.md` resume frames descartados, linhas
+ausentes e recomendações de captura. A saída inclui `codigo_extraido.txt`,
+`relatorio_falhas.md`, `ocr_raw.csv`, `metadata_video.json`,
+`extraction_parameters.json` e a pasta `frames_usados/`.
+
+> 🔒 **Locked spec.** A especificação canônica completa está em [`specs/`](specs/):
 > [mission](specs/mission.md) · [tech-stack](specs/tech-stack.md) · [roadmap](specs/roadmap.md).
 
+## Instalação
+
+### 1. Python 3.13
+
+> ⚠️ **Use Python 3.13.** O PaddleOCR (backend opcional) depende do
+> `paddlepaddle`, que **não publica wheels para Python 3.14+**. Mesmo que você
+> use só o Tesseract, recomendamos o 3.13 para manter o ambiente compatível com
+> o engine `paddle`.
+
+```bash
+# macOS
+brew install python@3.13
+
+# Windows: baixe o instalador do Python 3.13 em https://www.python.org/downloads/
+# e marque "Add python.exe to PATH" durante a instalação.
+```
+
+### 2. Dependências de sistema (ffmpeg + tesseract)
+
+Estas ferramentas **não** são instaladas pelo `pip` — precisam do gerenciador de
+pacotes do sistema:
+
+```bash
+# macOS (Homebrew)
 brew install ffmpeg tesseract
+```
 
-python3 -m venv .venv
+```powershell
+# Windows (Chocolatey, em PowerShell como Administrador)
+choco install ffmpeg tesseract
+```
+
+No Windows, se o `tesseract` não ficar no `PATH`, adicione a pasta de instalação
+(ex.: `C:\Program Files\Tesseract-OCR`) às variáveis de ambiente, ou use o
+instalador da UB Mannheim: <https://github.com/UB-Mannheim/tesseract/wiki>.
+
+### 3. Ambiente virtual e pacotes Python
+
+```bash
+# macOS / Linux
+python3.13 -m venv .venv
 source .venv/bin/activate
-
 python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
 
-python -m pip install \
-  opencv-python \
-  numpy \
-  pillow \
-  pandas \
-  tqdm \
-  rich \
-  rapidfuzz \
-  scikit-image \
-  pytesseract \
-  typer \
-  pydantic \
-  fastapi \
-  uvicorn \
-  httpx \
-  pytest
+```powershell
+# Windows (PowerShell)
+py -3.13 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
 
-  Quero que você gere um script Python completo, robusto e executável localmente para extrair código-fonte a partir de um vídeo de gravação de tela.
+### 4. (Opcional) PaddleOCR
 
-Contexto:
+O OCR padrão é o Tesseract. Para usar o engine `paddle`, instale o backend
+opcional:
 
-* O vídeo mostra uma tela com código sendo rolado verticalmente.
-* Os vídeos podem ter sido gravados em 30 fps, 60 fps ou 120 fps.
-* O script precisa identificar o FPS real do vídeo.
-* Alguns vídeos mostram número de linha no editor de código; outros não.
-* O objetivo é reconstruir o código real a partir dos frames do vídeo.
-* Quando não for possível extrair um trecho com confiança, o script deve indicar o tempo do vídeo, o número do frame e, se disponível, o número da linha.
-* Se houver lacuna de linhas, por exemplo linha 32 seguida da linha 34, o script deve registrar que a linha 33 está faltando.
+```bash
+python -m pip install paddleocr paddlepaddle
+```
 
-Requisitos funcionais:
-
-1. Criar uma CLI em Python usando `typer` ou `argparse`.
-
-2. O usuário deve conseguir rodar assim:
-
-   python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/
-
-3. O script deve criar a seguinte estrutura de saída:
-
-   saida/
-   ├── codigo_extraido.txt
-   ├── relatorio_falhas.md
-   ├── ocr_raw.csv
-   ├── metadata_video.json
-   ├── extraction_parameters.json
-   └── frames_usados/
-
-4. O script deve identificar metadados do vídeo:
-
-   * FPS;
-   * duração;
-   * resolução;
-   * total de frames;
-   * codec, se possível;
-   * estratégia de amostragem usada.
-
-5. Usar `ffprobe` para extrair metadados do vídeo quando disponível.
-
-6. Usar `OpenCV` como fallback para FPS, total de frames, resolução e leitura dos frames.
-
-7. O script deve ajustar automaticamente a amostragem conforme o FPS:
-
-   * 30 fps: sample_step padrão menor;
-   * 60 fps: sample_step intermediário;
-   * 120 fps: sample_step maior.
-
-8. O script deve evitar processar todos os frames se não for necessário.
-
-Processamento de imagem:
-
-1. Para cada frame candidato:
-
-   * converter para grayscale;
-   * aplicar resize para melhorar OCR;
-   * aplicar threshold adaptativo ou Otsu;
-   * aplicar sharpen ou denoise quando necessário.
-2. Calcular nitidez do frame usando variância do Laplaciano.
-3. Ignorar frames borrados durante o scroll.
-4. Usar SSIM ou diferença entre imagens para evitar processar frames quase idênticos.
-5. Permitir parâmetros opcionais de crop:
-
-   * --crop-left
-   * --crop-top
-   * --crop-right
-   * --crop-bottom
-6. Se crop não for informado, usar o frame inteiro.
-
-OCR:
-
-1. Implementar OCR com `pytesseract` como primeira opção.
-2. Estruturar o código de forma que seja fácil trocar para `PaddleOCR` depois.
-3. Preservar caracteres importantes de código:
-
-   * indentação;
-   * parênteses;
-   * colchetes;
-   * chaves;
-   * aspas;
-   * dois pontos;
-   * ponto;
-   * vírgula;
-   * operadores;
-   * underscores.
-4. Para cada resultado OCR, salvar:
-
-   * texto extraído;
-   * frame;
-   * tempo no vídeo;
-   * confiança, se disponível;
-   * caminho da imagem do frame usado.
-
-Reconstrução do código:
-
-1. Se houver números de linha:
-
-   * detectar o número da linha no começo da linha;
-   * separar número da linha e conteúdo;
-   * consolidar múltiplas leituras da mesma linha;
-   * escolher a melhor versão com base em confiança, nitidez e frequência;
-   * ordenar o código pelo número da linha.
-
-2. Se não houver números de linha:
-
-   * reconstruir a ordem pelo tempo do vídeo;
-   * remover duplicatas causadas pelo scroll;
-   * usar similaridade fuzzy para consolidar linhas repetidas.
-
-3. Detectar linhas faltantes quando houver numeração.
-
-4. Detectar trechos com baixa confiança.
-
-5. Nunca inventar código.
-
-6. Quando houver dúvida, marcar no código final com comentário:
-
-   # [OCR_UNCERTAIN] frame=1234 time=00:01:23.400 texto_original="..."
-
-7. Se uma linha estiver faltando, registrar no relatório:
-
-   Linha 45 possivelmente ausente entre os tempos 00:01:10.200 e 00:01:12.800.
-
-Relatório:
-Gerar `relatorio_falhas.md` contendo:
-
-* resumo do vídeo;
-* FPS detectado;
-* quantidade de frames analisados;
-* quantidade de frames descartados por baixa nitidez;
-* quantidade de linhas extraídas;
-* linhas faltantes;
-* linhas com baixa confiança;
-* trechos impossíveis de extrair;
-* recomendações para melhorar a extração, como gravar em maior resolução, reduzir velocidade do scroll, aumentar fonte do editor e usar tema de alto contraste.
-
-Qualidade do código:
-
-1. Código modularizado com funções claras:
-
-   * get_video_metadata()
-   * sample_frames()
-   * preprocess_frame()
-   * is_frame_blurry()
-   * run_ocr()
-   * parse_code_lines()
-   * merge_ocr_results()
-   * detect_missing_lines()
-   * write_outputs()
-2. Usar type hints.
-3. Usar dataclasses ou Pydantic para estruturar resultados.
-4. Ter logs claros usando `rich` ou `logging`.
-5. Tratar erros comuns:
-
-   * vídeo inexistente;
-   * ffprobe não instalado;
-   * tesseract não instalado;
-   * vídeo sem FPS detectável;
-   * OCR vazio;
-   * diretório de saída sem permissão.
-6. Incluir instruções de instalação no topo do arquivo ou em um README.
-7. O script deve rodar localmente, sem enviar dados para APIs externas.
-
-Bibliotecas esperadas:
-
-* opencv-python
-* numpy
-* pillow
-* pandas
-* tqdm
-* rich
-* rapidfuzz
-* scikit-image
-* pytesseract
-* typer ou argparse
-* pydantic ou dataclasses
-
-Entregáveis:
-
-1. Código completo do script `extract_code_from_video.py`.
-2. Exemplo de comando de execução.
-3. Explicação curta da lógica.
-4. Lista de instalação das dependências.
-5. Sugestões de melhoria futura, como PaddleOCR, modelo vision-language local ou integração com LLM para revisar o código extraído sem inventar trechos.
-
----
+> ⚠️ **No macOS o PaddleOCR roda apenas em CPU** — o `paddlepaddle` não oferece
+> aceleração CUDA no macOS (não há suporte a GPU NVIDIA nesta plataforma). Não
+> instale `paddlepaddle-gpu` no Mac. Em Windows/Linux com GPU NVIDIA é possível
+> usar a variante CUDA, mas a CPU é suficiente para esta ferramenta.
 
 ## Exemplo de comando de execução
 
@@ -240,10 +111,8 @@ python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \
   --start-time 00:00:10 --end-time 00:00:25.500
 ```
 
-O OCR padrão é o Tesseract. Para usar o PaddleOCR, instale o backend opcional
-(`python -m pip install paddleocr paddlepaddle`) e selecione o engine. O
-`paddlepaddle` ainda não publica wheels para Python 3.14 — use um virtualenv
-com Python ≤ 3.13 para esse engine:
+O OCR padrão é o Tesseract. Depois de instalar o backend opcional (ver
+[Instalação → PaddleOCR](#4-opcional-paddleocr)), selecione o engine `paddle`:
 
 ```bash
 python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \

@@ -1,0 +1,15 @@
+opencv-python
+numpy
+pillow
+pandas
+tqdm
+rich
+rapidfuzz
+scikit-image
+pytesseract
+typer
+pydantic
+fastapi
+uvicorn
+httpx
+pytest
