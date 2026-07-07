@@ -144,6 +144,63 @@ digits off the gutter or clips long code lines later in the video.
   keeps every line number fully visible on the left and no code line clipped
   on the right across the sampled frames. `ruff` and `mypy` pass.~~
 
+## ~~Phase 12 — Uncertainty & report honesty (deep-review fixes)~~ ✅
+Goal: make the honesty mechanism trustworthy in practice — the July 2026 deep
+review of `main` showed a real PaddleOCR run emitting visibly garbled lines with
+**zero** `[OCR_UNCERTAIN]` markers and a report claiming zero low-confidence
+passages.
+- ~~Per-engine uncertainty thresholds (Paddle scores sit at 95+ even for
+  garbage; the single Tesseract-calibrated cutoff of 60 never fires) **plus**
+  an engine-independent disagreement signal: mark a line uncertain when reads
+  of the same line diverge (low winner fuzzy-support share), regardless of
+  confidence.~~
+- ~~In `_best_read()`, never let empty (gutter-only) reads outvote non-empty
+  reads of the same line; a weakly-supported winner is flagged uncertain.~~
+- ~~Near-duplicate discards no longer inflate "Trechos impossíveis de
+  extrair" — their content was captured by the accepted neighbor frame.~~
+- ~~`prepare_output_tree()` clears **all** run-scoped artifacts, not just
+  `frames_usados/`, so a mid-run failure cannot leave stale outputs mixed with
+  fresh metadata.~~
+- ~~Report polish: collapse a leading run of never-shown line numbers into one
+  range entry; count reads dropped for having no detectable line number; warn
+  actionably when PaddleOCR models are not cached yet (a first run would
+  download them from the network — offline promise).~~
+- ~~Fix `suggest_crop.py` sampling: an explicit `--start-time 0` must be
+  respected (falsy-int `or` bug).~~
+- ~~Regenerate `saida/` via `sample-video/run_sample.py` so the local evidence
+  matches the committed runner.~~
+
+## Phase 13 — Reproducible tooling & pipeline tests
+Goal: the quality gates become reproducible and the fidelity-critical logic
+gets a regression net.
+- Commit a `pyproject.toml` pinning the ruff ruleset (one that justifies the
+  existing `# noqa: PLC0415` markers), formatter settings, mypy strictness,
+  and pytest config.
+- `test_extract_code_from_video.py`: pure-function tests for
+  `parse_code_lines()`, `merge_ocr_results()`/`_best_read()` (including the
+  Phase 12 behaviors), `reconstruct_by_time()`/`_overlap_length()`,
+  `detect_missing_lines()`, `_parse_timestamp()`, `_candidate_frame_window()`,
+  `_reconstruct_words()`, `unextractable_sections()` — no video or OCR backend
+  needed, following the `FakeEngine` pattern from `test_suggest_crop.py`.
+- Clean `requirements.txt`: drop unused `tqdm`; note that `pillow` is a
+  pytesseract dependency.
+
+## Phase 14 — Quality & refactoring
+Goal: apply the deep review's consistency findings without behavior changes.
+- Library seams raise typed exceptions (pattern already set by
+  `InvalidVideoMetadataError`) instead of calling `_fail()`/`typer.Exit`;
+  `main()` translates at the CLI boundary; `suggest_crop.py` stops catching
+  `typer.Exit` and fabricating a different message.
+- `suggest_crop.py` imports `apply_crop()` instead of re-implementing it
+  (`_apply_crop_view`); names shared across the two entrypoints become public
+  (`fail`, `require_cv2`, `console`, `MatLike`).
+- Collapse the three near-identical failure blocks in `main()` into one
+  `_bail_with_report(...)` helper; sweep the remaining low-severity nits
+  (dead `_combined_confidence` alias, duplicated OCR-result assembly tails,
+  `Field(default_factory=list)` consistency, crop CLI options via
+  `typer.Option(min=0)`, `_candidate_frame_window` returning a typed object,
+  `sampling_strategy` off the metadata model, crop-preview wording).
+
 ## Future (not scheduled)
 - Local vision-language model.
 - Optional LLM review pass that flags — but never fabricates — code.

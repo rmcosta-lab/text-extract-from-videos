@@ -223,19 +223,20 @@ def _plain(message: str) -> str:
 def sample_frame_indices(
     total_frames: int,
     count: int,
-    start_frame: int = 0,
+    start_frame: int | None = None,
     end_frame_exclusive: int | None = None,
 ) -> list[int]:
     """Evenly spaced indices across the sampling window (whole video default).
 
     Without an explicit window start, sampling begins at the reference frame
     to skip recording-start artifacts; an explicit ``start_frame`` (from
-    ``--start-time``) is respected exactly.
+    ``--start-time``, including 0) is respected exactly.
     """
     if end_frame_exclusive is None:
         end_frame_exclusive = total_frames
     last = max(0, min(total_frames, end_frame_exclusive) - 1)
-    first = min(start_frame or min(REFERENCE_FRAME_INDEX, last), last)
+    default_first = min(REFERENCE_FRAME_INDEX, last)
+    first = min(start_frame if start_frame is not None else default_first, last)
     if count <= 1 or first == last:
         return [first]
     step = (last - first) / (count - 1)
@@ -271,7 +272,7 @@ def read_sampled_frames(
     indices = sample_frame_indices(
         metadata.total_frames,
         count,
-        start_frame=window.sample_start_frame,
+        start_frame=None if window.start_defaulted else window.sample_start_frame,
         end_frame_exclusive=window.sample_end_frame_exclusive,
     )
     capture = cv2.VideoCapture(str(video))

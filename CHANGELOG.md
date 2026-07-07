@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-07-07
+
+- Complete Phase 12 — uncertainty & report honesty: calibrate the `[OCR_UNCERTAIN]` confidence floor per engine (`uncertain_confidence_for()` — 60 for Tesseract, 95 for PaddleOCR whose scores saturate above 95 even for garbled reads) and add an engine-independent disagreement gate in `_best_read()` (a line is uncertain when fewer than half of ≥ 3 reads fuzzy-match the winning content), fixing the real Paddle run that shipped visible garbage with zero markers; stop gutter-only empty reads from outvoting non-empty content for the same line; count near-duplicate discards as covered by their accepted neighbor so they no longer inflate "Trechos impossíveis de extrair"; clear all five run artifacts in `prepare_output_tree()` so mid-run failures cannot leave stale outputs mixed with fresh metadata; collapse a leading run of never-shown line numbers into one range entry and report how many reads lacked a detectable line number; warn when PaddleOCR models are not cached locally (a first run would download them); respect an explicit `--start-time 0` in `suggest_crop.py` sampling; add phase spec (`specs/2026-07-07-uncertainty-report-honesty/`) and Phases 12–14 to the roadmap.
+
 ## 2026-07-06
 
 - Complete Phase 11 — multi-frame crop analysis: sample multiple frames across the video's duration and combine their per-frame crop observations into one suggestion (leftmost detected gutter edge for `--crop-left`, tightest safe bound excluding the noise column for `--crop-right`, same "never cut detected text" rule top/bottom), keeping the honesty rule that frames with no OCR text contribute nothing; refine the web preview to show which frames informed the combined suggestion and add zoom/sampling controls to `crop_preview.html`.

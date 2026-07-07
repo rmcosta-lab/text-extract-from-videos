@@ -86,7 +86,19 @@ MIN_INCREASING_SHARE = 0.8
 """...and detected numbers are increasing within a frame at least this often."""
 
 OCR_UNCERTAIN_CONFIDENCE = 60.0
-"""Merged lines whose best read is below this get an `[OCR_UNCERTAIN]` marker."""
+"""Tesseract-calibrated confidence floor for the `[OCR_UNCERTAIN]` marker."""
+
+OCR_UNCERTAIN_CONFIDENCE_PADDLE = 95.0
+"""PaddleOCR floor — its scores saturate above ~95 even for garbled reads, so
+this catches only genuinely weak reads; saturated garbage is caught by the
+read-agreement gate instead."""
+
+MIN_AGREEMENT_SHARE = 0.5
+"""A merged line is uncertain when fewer than this share of its reads
+fuzzy-match the winning content — an engine-independent disagreement signal."""
+
+MIN_READS_FOR_AGREEMENT = 3
+"""The agreement gate only fires with at least this many reads of a line."""
 
 FUZZY_MATCH_THRESHOLD = 85.0
 """rapidfuzz ratio (0-100) at/above which two reads count as the same line."""
@@ -311,13 +323,15 @@ class MergedLine(BaseModel):
 
 
 class FrameOutcome(BaseModel):
-    """Whether one sampled frame yielded usable text — feeds the failure report."""
+    """Whether one sampled frame's content was captured — feeds the failure report."""
 
     frame_number: int
     time_seconds: float
     time_formatted: str
     usable: bool
-    """True when the frame survived selection and OCR returned non-blank text."""
+    """True when the frame's on-screen content was captured: either OCR here
+    returned non-blank text, or the frame was a near-duplicate of the accepted
+    neighbor that already carries the same content."""
 
 
 # --- Metadata ------------------------------------------------------------
@@ -490,6 +504,13 @@ class EngineName(str, Enum):
 
     tesseract = "tesseract"
     paddle = "paddle"
+
+
+def uncertain_confidence_for(engine: EngineName) -> float:
+    """Confidence floor for the `[OCR_UNCERTAIN]` marker, calibrated per engine."""
+    if engine is EngineName.paddle:
+        return OCR_UNCERTAIN_CONFIDENCE_PADDLE
+    return OCR_UNCERTAIN_CONFIDENCE
 
 
 class ExtractionParameters(BaseModel):
@@ -957,6 +978,18 @@ def _paddle_detections(page: Any) -> Iterator[tuple[str, Any, Any]]:
         yield str(recognition[0]), recognition[1], poly
 
 
+def _paddle_models_cached() -> bool:
+    """Best-effort check that PaddleX model files are already on disk."""
+    cache_home = os.environ.get("PADDLE_PDX_CACHE_HOME")
+    models_dir = (
+        Path(cache_home) if cache_home else Path.home() / ".paddlex"
+    ) / "official_models"
+    try:
+        return models_dir.is_dir() and any(models_dir.iterdir())
+    except OSError:
+        return False
+
+
 def _paddle_input(image: MatLike) -> MatLike:
     """PaddleOCR expects 3-channel input; expand preprocessed grayscale frames."""
     if getattr(image, "ndim", 3) == 2:
@@ -980,6 +1013,13 @@ class PaddleOCREngine:
         # Keep cached-model runs offline: skip PaddleX's model-hoster
         # connectivity probe unless the user explicitly re-enables it.
         os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+        if not _paddle_models_cached():
+            _warn(
+                "no cached PaddleOCR models were found — the first PaddleOCR "
+                "run downloads them from the network, breaking the offline "
+                "guarantee for this run. Run it once on a connected machine "
+                "(models land in ~/.paddlex/official_models), then re-run."
+            )
         paddle_ocr = _require_paddleocr()
         try:
             try:
@@ -1126,9 +1166,11 @@ def run_ocr(
     against the last accepted frame → full preprocessing → save the
     preprocessed image (what OCR actually sees) to `frames_usados/` → OCR.
     An empty OCR read is recorded as a row with empty text, not an error.
-    Every sampled frame also yields a :class:`FrameOutcome` — usable only
-    when it was kept and OCR returned non-blank text — so the failure report
-    can surface unextractable time spans from observed outcomes.
+    Every sampled frame also yields a :class:`FrameOutcome` — usable when it
+    was kept and OCR returned non-blank text, or when it was discarded as a
+    near-duplicate (its content is covered by the accepted neighbor) — so the
+    failure report can surface unextractable time spans from observed
+    outcomes.
     """
     rows: list[OCRRow] = []
     stats = SelectionStats()
@@ -1168,7 +1210,9 @@ def run_ocr(
             )
             if score > SSIM_THRESHOLD:
                 stats.frames_discarded_duplicate += 1
-                record_outcome(frame_number, time_seconds, usable=False)
+                # The accepted neighbor already carries this frame's content,
+                # so the span is covered — not "impossible to extract".
+                record_outcome(frame_number, time_seconds, usable=True)
                 continue
         last_accepted_thumbnail = thumbnail
 
@@ -1514,19 +1558,27 @@ def _same_line(a: str, b: str) -> bool:
     return fuzz.ratio(_normalized(a), _normalized(b)) >= FUZZY_MATCH_THRESHOLD
 
 
-def _best_read(group: list[LineRead]) -> MergedLine:
+def _best_read(
+    group: list[LineRead], *, uncertain_confidence: float = OCR_UNCERTAIN_CONFIDENCE
+) -> MergedLine:
     """Pick a group's best read: frequency, then confidence, then sharpness.
 
-    The most frequent content wins (whitespace-normalized for counting),
-    ties broken by confidence then frame sharpness. The winning read's
-    content is emitted verbatim — reads are never blended. Below
-    ``OCR_UNCERTAIN_CONFIDENCE`` (or with no confidence at all) the line is
-    flagged uncertain.
+    The winner is chosen among non-empty reads when any exist — a gutter-only
+    read (number seen, content not) is evidence the content was unreadable in
+    that frame, not that the line is blank. The most frequent content wins
+    (whitespace-normalized for counting), ties broken by confidence then frame
+    sharpness. The winning read's content is emitted verbatim — reads are
+    never blended. The line is flagged uncertain when the winner's confidence
+    is missing or below ``uncertain_confidence``, or when fewer than
+    ``MIN_AGREEMENT_SHARE`` of at least ``MIN_READS_FOR_AGREEMENT`` reads
+    fuzzy-match the winning content — disagreement across frames marks
+    garbage that saturated engine confidences would let through.
     """
-    frequency = Counter(_normalized(read.content) for read in group)
+    candidates = [read for read in group if _normalized(read.content)] or group
+    frequency = Counter(_normalized(read.content) for read in candidates)
     top_count = max(frequency.values())
     finalists = [
-        read for read in group if frequency[_normalized(read.content)] == top_count
+        read for read in candidates if frequency[_normalized(read.content)] == top_count
     ]
     winner = max(
         finalists,
@@ -1535,13 +1587,24 @@ def _best_read(group: list[LineRead]) -> MergedLine:
             read.sharpness,
         ),
     )
+    agreeing = sum(1 for read in group if _same_line(read.content, winner.content))
+    contested = (
+        len(group) >= MIN_READS_FOR_AGREEMENT
+        and agreeing / len(group) < MIN_AGREEMENT_SHARE
+    )
     uncertain = (
-        winner.confidence is None or winner.confidence < OCR_UNCERTAIN_CONFIDENCE
+        winner.confidence is None
+        or winner.confidence < uncertain_confidence
+        or contested
     )
     return MergedLine(read=winner, uncertain=uncertain)
 
 
-def merge_ocr_results(reads: list[LineRead]) -> list[MergedLine]:
+def merge_ocr_results(
+    reads: list[LineRead],
+    *,
+    uncertain_confidence: float = OCR_UNCERTAIN_CONFIDENCE,
+) -> list[MergedLine]:
     """Consolidate repeated reads of each numbered line into one best read.
 
     Reads are grouped by detected line number and each group's winner is
@@ -1552,7 +1615,10 @@ def merge_ocr_results(reads: list[LineRead]) -> list[MergedLine]:
     for read in reads:
         if read.line_number is not None:
             by_number.setdefault(read.line_number, []).append(read)
-    return [_best_read(by_number[number]) for number in sorted(by_number)]
+    return [
+        _best_read(by_number[number], uncertain_confidence=uncertain_confidence)
+        for number in sorted(by_number)
+    ]
 
 
 def _overlap_length(document: list[list[LineRead]], frame_lines: list[LineRead]) -> int:
@@ -1572,7 +1638,11 @@ def _overlap_length(document: list[list[LineRead]], frame_lines: list[LineRead])
     return 0
 
 
-def reconstruct_by_time(reads: list[LineRead]) -> list[MergedLine]:
+def reconstruct_by_time(
+    reads: list[LineRead],
+    *,
+    uncertain_confidence: float = OCR_UNCERTAIN_CONFIDENCE,
+) -> list[MergedLine]:
     """Reconstruct unnumbered code in video-time order, deduplicating scroll.
 
     Frames are processed in ascending time; within a frame, lines keep their
@@ -1597,7 +1667,10 @@ def reconstruct_by_time(reads: list[LineRead]) -> list[MergedLine]:
                 document[start + index].append(read)
             else:
                 document.append([read])
-    return [_best_read(group) for group in document]
+    return [
+        _best_read(group, uncertain_confidence=uncertain_confidence)
+        for group in document
+    ]
 
 
 # --- Gap detection & failure report -----------------------------------------
@@ -1642,6 +1715,9 @@ class FailureReport(BaseModel):
     stats: SelectionStats
     lines_extracted: int
     line_numbers_detected: bool
+    reads_without_line_number: int = 0
+    """Reads excluded from the numbered reconstruction because no line number
+    was detected for them — their raw text survives in `ocr_raw.csv`."""
     missing_lines: list[MissingLine] = Field(default_factory=list)
     uncertain_lines: list[MergedLine] = Field(default_factory=list)
     unextractable: list[TimeSpan] = Field(default_factory=list)
@@ -1703,8 +1779,9 @@ def unextractable_sections(outcomes: list[FrameOutcome]) -> list[TimeSpan]:
     """Group consecutive unusable sampled frames into (start, end) time spans.
 
     Spans come only from observed per-frame outcomes — frames discarded as
-    blurry / near-duplicate or whose OCR came back blank; content is never
-    inferred.
+    blurry or whose OCR came back blank; content is never inferred.
+    Near-duplicate discards are covered by their accepted neighbor and do not
+    open or extend a span.
     """
     spans: list[TimeSpan] = []
     run: list[FrameOutcome] = []
@@ -1771,6 +1848,34 @@ def _missing_line_entry(missing: MissingLine) -> str:
     )
 
 
+def _missing_line_entries(missing: list[MissingLine]) -> list[str]:
+    """Render missing lines, collapsing the leading never-shown run into a range.
+
+    Numbering that starts above 1 yields one gap per absent leading number;
+    listing hundreds of them would drown real scroll gaps in noise, so the
+    contiguous leading run (no before-neighbor) becomes a single range entry.
+    The report's total count is untouched — only the listing is condensed.
+    """
+    leading = 0
+    while leading < len(missing) and missing[leading].before is None:
+        leading += 1
+    if leading < 2:
+        return [_missing_line_entry(item) for item in missing]
+
+    last_leading = missing[leading - 1]
+    window = (
+        f" (primeira linha extraída vista no tempo {last_leading.after.time_formatted})"
+        if last_leading.after is not None
+        else ""
+    )
+    entries = [
+        f"Linhas {missing[0].line_number} a {last_leading.line_number} nunca "
+        f"exibidas no vídeo{window}."
+    ]
+    entries += [_missing_line_entry(item) for item in missing[leading:]]
+    return entries
+
+
 def _uncertain_entry(item: MergedLine) -> str:
     """Render one low-confidence merged line with its frame/time provenance."""
     read = item.read
@@ -1832,6 +1937,11 @@ def write_failure_report(report: FailureReport, output: Path) -> None:
     ]
     if report.line_numbers_detected:
         lines.append("- Reconstrução: por número de linha (numeração visível).")
+        lines.append(
+            "- Leituras sem número de linha detectável (excluídas da "
+            "reconstrução numerada; texto bruto preservado em `ocr_raw.csv`): "
+            f"{report.reads_without_line_number}"
+        )
     else:
         lines.append(
             "- Reconstrução: por ordem temporal (sem números de linha visíveis)."
@@ -1850,7 +1960,7 @@ def write_failure_report(report: FailureReport, output: Path) -> None:
         lines.append(f"- Linhas possivelmente ausentes: {len(report.missing_lines)}")
         if report.missing_lines:
             lines.append("")
-            lines += [_missing_line_entry(missing) for missing in report.missing_lines]
+            lines += _missing_line_entries(report.missing_lines)
         else:
             lines.append("- Nenhuma linha faltante detectada.")
 
@@ -1882,7 +1992,7 @@ def write_failure_report(report: FailureReport, output: Path) -> None:
         lines += [
             f"- De {span.start_formatted} a {span.end_formatted} "
             f"({span.frames} frame(s) amostrado(s) sem texto utilizável — "
-            "descartados ou com OCR vazio)."
+            "descartados por baixa nitidez ou com OCR vazio)."
             for span in report.unextractable
         ]
     else:
@@ -1908,6 +2018,27 @@ def write_failure_report(report: FailureReport, output: Path) -> None:
 # --- Outputs ---------------------------------------------------------------
 
 
+RUN_ARTIFACT_FILENAMES = (
+    "codigo_extraido.txt",
+    "relatorio_falhas.md",
+    "ocr_raw.csv",
+    "metadata_video.json",
+    "extraction_parameters.json",
+)
+"""Run-scoped output files cleared up front so failed runs cannot leave a
+previous run's artifacts mixed with this run's fresh outputs."""
+
+
+def _clear_stale_artifacts(output: Path) -> None:
+    """Remove the previous run's output files so the tree is run-scoped."""
+    for name in RUN_ARTIFACT_FILENAMES:
+        stale = output / name
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError as exc:
+            _fail(f"cannot remove stale output file [cyan]{stale}[/cyan]: {exc}")
+
+
 def _clear_frames_dir(frames_dir: Path) -> None:
     """Remove stale frame artifacts so `frames_usados/` is run-scoped."""
     for child in frames_dir.iterdir():
@@ -1921,7 +2052,7 @@ def _clear_frames_dir(frames_dir: Path) -> None:
 
 
 def prepare_output_tree(output: Path) -> Path:
-    """Create the output tree, verify writability, and clear stale frames."""
+    """Create the output tree, verify writability, and clear stale artifacts."""
     try:
         output.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -1942,6 +2073,7 @@ def prepare_output_tree(output: Path) -> Path:
     except OSError as exc:
         _fail(f"output directory [cyan]{output}[/cyan] is not writable: {exc}")
 
+    _clear_stale_artifacts(output)
     _clear_frames_dir(frames_dir)
     return frames_dir
 
@@ -2204,12 +2336,15 @@ def main(
             "high-contrast editor theme."
         )
     numbered = has_line_numbers(reads)
+    uncertain_confidence = uncertain_confidence_for(engine_name)
+    reads_without_number = 0
     if numbered:
-        merged = merge_ocr_results(reads)
+        reads_without_number = sum(1 for read in reads if read.line_number is None)
+        merged = merge_ocr_results(reads, uncertain_confidence=uncertain_confidence)
         path_taken = "line numbers detected — merged by line number"
     else:
         reads = parse_code_lines(rows, strip_line_numbers=False)
-        merged = reconstruct_by_time(reads)
+        merged = reconstruct_by_time(reads, uncertain_confidence=uncertain_confidence)
         path_taken = "no line numbers detected — reconstructed by video time"
     uncertain = sum(1 for item in merged if item.uncertain)
     console.print(
@@ -2225,6 +2360,7 @@ def main(
         stats=stats,
         lines_extracted=len(merged),
         line_numbers_detected=numbered,
+        reads_without_line_number=reads_without_number,
         missing_lines=missing,
         uncertain_lines=[item for item in merged if item.uncertain],
         unextractable=unextractable_sections(outcomes),
