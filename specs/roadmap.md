@@ -170,20 +170,20 @@ passages.
 - ~~Regenerate `saida/` via `sample-video/run_sample.py` so the local evidence
   matches the committed runner.~~
 
-## Phase 13 — Reproducible tooling & pipeline tests
+## ~~Phase 13 — Reproducible tooling & pipeline tests~~ ✅
 Goal: the quality gates become reproducible and the fidelity-critical logic
 gets a regression net.
-- Commit a `pyproject.toml` pinning the ruff ruleset (one that justifies the
+- ~~Commit a `pyproject.toml` pinning the ruff ruleset (one that justifies the
   existing `# noqa: PLC0415` markers), formatter settings, mypy strictness,
-  and pytest config.
-- `test_extract_code_from_video.py`: pure-function tests for
+  and pytest config.~~
+- ~~`test_extract_code_from_video.py`: pure-function tests for
   `parse_code_lines()`, `merge_ocr_results()`/`_best_read()` (including the
   Phase 12 behaviors), `reconstruct_by_time()`/`_overlap_length()`,
   `detect_missing_lines()`, `_parse_timestamp()`, `_candidate_frame_window()`,
   `_reconstruct_words()`, `unextractable_sections()` — no video or OCR backend
-  needed, following the `FakeEngine` pattern from `test_suggest_crop.py`.
-- Clean `requirements.txt`: drop unused `tqdm`; note that `pillow` is a
-  pytesseract dependency.
+  needed, following the `FakeEngine` pattern from `test_suggest_crop.py`.~~
+- ~~Clean `requirements.txt`: drop unused `tqdm`; note that `pillow` is a
+  pytesseract dependency.~~
 
 ## Phase 14 — Quality & refactoring
 Goal: apply the deep review's consistency findings without behavior changes.
