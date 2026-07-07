@@ -267,14 +267,29 @@ informaram a sugestão:
 python suggest_crop.py --video sample-video/IMG_5430.MOV
 ```
 
+Para restringir a análise a um trecho do vídeo, use `--start-time` e
+`--end-time` (mesmos formatos do comando principal: segundos, `MM:SS(.mmm)`
+ou `HH:MM:SS(.mmm)`); apenas frames dentro do intervalo são amostrados:
+
+```bash
+python suggest_crop.py --video sample-video/IMG_5430.MOV \
+  --start-time 00:00:10 --end-time 00:00:25.500
+```
+
 Na página é possível editar os quatro valores (o backend recorta o frame de
 novo e atualiza o preview), trocar o engine (`tesseract`/`paddle`) e copiar a
 string pronta com as flags `--crop-left/--crop-top/--crop-right/--crop-bottom`
-para colar no comando principal. Frames sem texto não contribuem para a
-sugestão; se o OCR não detectar texto em nenhum frame amostrado, a ferramenta
-mostra o frame inteiro com crop zero e avisa — ela nunca inventa uma região.
-Opções: `--engine`, `--sample-count` (número de frames amostrados), `--host`,
-`--port` e `--no-open` (não abrir o navegador automaticamente).
+para colar no comando principal. A página também lista todos os frames
+amostrados em miniatura — os que informaram a sugestão ficam destacados — com
+o retângulo do crop sobreposto em cada um; qualquer imagem pode ser clicada
+para ampliar (o retângulo acompanha o zoom nos frames inteiros e some na
+imagem já recortada), e no zoom de um frame amostrado as setas ← e → do
+teclado navegam entre eles. Frames sem texto não contribuem para a sugestão; se o
+OCR não detectar texto em nenhum frame amostrado, a ferramenta mostra o frame
+inteiro com crop zero e avisa — ela nunca inventa uma região. Opções:
+`--engine`, `--sample-count` (número de frames amostrados), `--start-time` /
+`--end-time` (janela de tempo analisada), `--host`, `--port` e `--no-open`
+(não abrir o navegador automaticamente).
 
 ## Explicação curta da lógica
 

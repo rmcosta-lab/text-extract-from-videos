@@ -56,11 +56,38 @@
     border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
   }
   .frame-wrap img { border: none; border-radius: 0; }
-  #crop-outline {
+  .crop-outline {
     position: absolute; pointer-events: none; border: 2px solid #e74c3c;
-    box-shadow: 0 0 0 9999px rgba(0, 0, 0, .45);
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, .45); display: none;
+    left: var(--crop-left, 0%); right: var(--crop-right, 0%);
+    top: var(--crop-top, 0%); bottom: var(--crop-bottom, 0%);
   }
+  body.has-crop .crop-outline:not([hidden]) { display: block; }
   #busy { opacity: .6; }
+  .zoomable { cursor: zoom-in; }
+  #samples-title { font-size: 1.05rem; margin: 1.5rem 0 .5rem; }
+  #samples {
+    display: grid; gap: .75rem;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  }
+  #samples figcaption {
+    font-weight: 600; font-size: .85rem; margin: .25rem 0 0;
+  }
+  #samples .informing figcaption { color: #1e8449; }
+  #samples .crop-outline { border-width: 1px; }
+  #zoom {
+    position: fixed; inset: 0; z-index: 10; cursor: zoom-out;
+    display: flex; flex-direction: column; gap: .5rem;
+    align-items: center; justify-content: center;
+    padding: 1rem; background: rgba(0, 0, 0, .82);
+  }
+  #zoom[hidden] { display: none; }
+  #zoom img {
+    max-width: 96vw; max-height: 90vh; width: auto;
+    border: none; background: #fff;
+  }
+  #zoom .frame-wrap { border: none; border-radius: 0; }
+  #zoom figcaption { color: #fff; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -95,15 +122,27 @@
     <figcaption>Original (frame <span id="frame-index">?</span>) — o retângulo
       marca a área mantida</figcaption>
     <div class="frame-wrap">
-      <img id="original" alt="Frame original">
-      <div id="crop-outline" hidden></div>
+      <img id="original" class="zoomable" alt="Frame original">
+      <div class="crop-outline"></div>
     </div>
   </figure>
   <figure>
     <figcaption>Com crop (<span id="cropped-size">?</span>)</figcaption>
-    <img id="cropped" alt="Frame com crop aplicado">
+    <img id="cropped" class="zoomable" alt="Frame com crop aplicado">
   </figure>
 </div>
+
+<h2 id="samples-title">Frames amostrados (<span id="sample-count">?</span>)
+  — clique para ampliar; no zoom, ← e → navegam</h2>
+<div id="samples"></div>
+
+<figure id="zoom" hidden>
+  <div class="frame-wrap">
+    <img id="zoom-img" alt="Frame ampliado">
+    <div id="zoom-outline" class="crop-outline" hidden></div>
+  </div>
+  <figcaption id="zoom-caption"></figcaption>
+</figure>
 
 <script>
 "use strict";
@@ -112,6 +151,8 @@ const edges = ["left", "top", "right", "bottom"];
 let suggested = null;
 let frameSize = null;
 let debounceTimer = null;
+let sampleFrameIndices = [];
+let zoomSamplePosition = null;
 
 function setNotice(text, kind) {
   const el = $("notice");
@@ -123,20 +164,73 @@ function setNotice(text, kind) {
 function setBusy(busy) { $("busy").hidden = !busy; }
 
 function updateOutline() {
-  const outline = $("crop-outline");
-  if (!frameSize) { outline.hidden = true; return; }
+  document.body.classList.toggle("has-crop", Boolean(frameSize));
+  if (!frameSize) return;
   const pct = (value, total) =>
     (Math.max(0, Number(value) || 0) / total * 100) + "%";
-  outline.style.left = pct($("left").value, frameSize.width);
-  outline.style.right = pct($("right").value, frameSize.width);
-  outline.style.top = pct($("top").value, frameSize.height);
-  outline.style.bottom = pct($("bottom").value, frameSize.height);
-  outline.hidden = false;
+  const style = document.documentElement.style;
+  style.setProperty("--crop-left", pct($("left").value, frameSize.width));
+  style.setProperty("--crop-right", pct($("right").value, frameSize.width));
+  style.setProperty("--crop-top", pct($("top").value, frameSize.height));
+  style.setProperty("--crop-bottom", pct($("bottom").value, frameSize.height));
 }
 
 function setCropped(base64, width, height) {
   $("cropped").src = "data:image/png;base64," + base64;
   $("cropped-size").textContent = width + " × " + height + " px";
+}
+
+function openZoom(src, caption, withOutline) {
+  zoomSamplePosition = null;
+  $("zoom-img").src = src;
+  $("zoom-caption").textContent = caption;
+  $("zoom-outline").hidden = !withOutline;
+  $("zoom").hidden = false;
+}
+
+function openSampleZoom(position) {
+  const frameIndex = sampleFrameIndices[position];
+  openZoom(
+    "/api/frame/" + frameIndex,
+    "Frame " + frameIndex + " (" + (position + 1) + " de " +
+      sampleFrameIndices.length + " — ← e → navegam)",
+    true
+  );
+  zoomSamplePosition = position;
+}
+
+function closeZoom() {
+  zoomSamplePosition = null;
+  $("zoom").hidden = true;
+  $("zoom-img").src = "";
+}
+
+function renderSamples(data) {
+  const informing = new Set(data.text_frame_indices || []);
+  const frames = data.sample_frames || [];
+  sampleFrameIndices = frames.map((sample) => sample.frame_index);
+  $("sample-count").textContent = frames.length;
+  const container = $("samples");
+  container.replaceChildren();
+  frames.forEach((sample, position) => {
+    const figure = document.createElement("figure");
+    if (informing.has(sample.frame_index)) figure.className = "informing";
+    const img = document.createElement("img");
+    img.className = "zoomable";
+    img.src = "data:image/png;base64," + sample.png_base64;
+    img.alt = "Frame " + sample.frame_index;
+    img.addEventListener("click", () => openSampleZoom(position));
+    const wrap = document.createElement("div");
+    wrap.className = "frame-wrap";
+    const outline = document.createElement("div");
+    outline.className = "crop-outline";
+    wrap.append(img, outline);
+    const caption = document.createElement("figcaption");
+    caption.textContent = "frame " + sample.frame_index +
+      (informing.has(sample.frame_index) ? " — com texto" : "");
+    figure.append(wrap, caption);
+    container.append(figure);
+  });
 }
 
 function applyPreview(data) {
@@ -157,6 +251,7 @@ function applyPreview(data) {
     (skipped.length ? " — não decodificados: " + skipped.join(", ") : "");
   $("frame-index").textContent = data.frame_index;
   $("original").src = "data:image/png;base64," + data.original_png_base64;
+  renderSamples(data);
   setCropped(
     data.cropped_png_base64,
     data.frame_width - data.crop.left - data.crop.right,
@@ -230,6 +325,22 @@ $("copy").addEventListener("click", async () => {
   await navigator.clipboard.writeText($("flags").textContent);
   $("copy").textContent = "Copiado!";
   setTimeout(() => { $("copy").textContent = "Copiar"; }, 1200);
+});
+$("original").addEventListener("click", () => openZoom(
+  $("original").src, "Original — frame " + $("frame-index").textContent, true
+));
+$("cropped").addEventListener("click", () => openZoom(
+  $("cropped").src, "Com crop (" + $("cropped-size").textContent + ")", false
+));
+$("zoom").addEventListener("click", closeZoom);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") { closeZoom(); return; }
+  if ($("zoom").hidden || zoomSamplePosition === null) return;
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  event.preventDefault();
+  const step = event.key === "ArrowLeft" ? -1 : 1;
+  const total = sampleFrameIndices.length;
+  openSampleZoom((zoomSamplePosition + step + total) % total);
 });
 
 loadPreview();

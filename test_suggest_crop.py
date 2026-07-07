@@ -6,11 +6,13 @@ skipped cleanly when the video or the Tesseract backend is unavailable.
 """
 
 import base64
+import math
 import struct
 from pathlib import Path
 
 import numpy as np
 import pytest
+import typer
 from fastapi.testclient import TestClient
 
 from extract_code_from_video import (
@@ -21,15 +23,18 @@ from extract_code_from_video import (
     OCRLine,
     OCRResult,
     OCRWord,
+    get_video_metadata,
 )
 from suggest_crop import (
     REFERENCE_FRAME_INDEX,
+    THUMBNAIL_WIDTH,
     FrameObservation,
     ReferenceFrame,
     TextGeometry,
     _crop_error,
     combine_observations,
     create_app,
+    read_sampled_frames,
     sample_frame_indices,
     suggest_crop,
 )
@@ -194,6 +199,38 @@ def test_sample_indices_deduplicate_when_video_is_short() -> None:
     assert indices[0] == 30 and indices[-1] == 33
 
 
+def test_sample_indices_respect_an_explicit_window() -> None:
+    indices = sample_frame_indices(
+        total_frames=1030, count=5, start_frame=100, end_frame_exclusive=601
+    )
+    assert indices == [100, 225, 350, 475, 600]
+
+
+def test_sample_indices_explicit_start_skips_the_reference_offset() -> None:
+    # `--start-time` before the reference frame is respected exactly: the
+    # artifact-skipping default only applies when no window start was given.
+    indices = sample_frame_indices(total_frames=1030, count=3, start_frame=10)
+    assert indices[0] == 10 and indices[-1] == 1029
+
+
+def test_read_sampled_frames_respects_the_time_window() -> None:
+    if not SAMPLE_VIDEO.is_file():
+        pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
+    metadata = get_video_metadata(SAMPLE_VIDEO)
+    samples = read_sampled_frames(SAMPLE_VIDEO, 3, start_time="2", end_time="4")
+    indices = [frame.frame_index for frame in samples.frames]
+    assert indices == sorted(indices)
+    assert indices[0] >= math.floor(2 * metadata.fps)
+    assert indices[-1] <= math.ceil(4 * metadata.fps)
+
+
+def test_read_sampled_frames_rejects_an_inverted_window() -> None:
+    if not SAMPLE_VIDEO.is_file():
+        pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
+    with pytest.raises(typer.Exit):
+        read_sampled_frames(SAMPLE_VIDEO, 3, start_time="5", end_time="2")
+
+
 # --- Combination unit tests ---------------------------------------------------
 
 
@@ -241,9 +278,10 @@ def test_combine_noise_column_needs_a_majority() -> None:
     assert majority.crop.right == 600 - 560
 
 
-def test_combine_right_cut_never_clips_any_frames_text() -> None:
-    # Both frames see noise at x=500, but frame 600 has code reaching x=550:
-    # the cut moves right so that line is not clipped.
+def test_combine_right_cut_stays_at_the_rightmost_noise_start() -> None:
+    # Both frames agree the noise column starts by x=500; frame 600's "kept"
+    # text reaching x=550 is junk that leaked past the per-frame confidence
+    # filter and must not push the cut right of the noise column.
     combined = combine_observations(
         [
             _observation(30, noise_left=500),
@@ -252,7 +290,23 @@ def test_combine_right_cut_never_clips_any_frames_text() -> None:
         600,
         400,
     )
-    assert combined.crop.right == 600 - 550
+    assert combined.crop.right == 600 - 500
+
+
+def test_combine_right_cut_excludes_junk_merged_into_kept_text() -> None:
+    # Frame 600 never detected the noise column: the minimap junk merged into
+    # its kept text (text_right=590). The majority located the noise at
+    # x<=560, so the combined crop still cuts the column there.
+    combined = combine_observations(
+        [
+            _observation(30, noise_left=560),
+            _observation(300, noise_left=550),
+            _observation(600, text_right=590),
+        ],
+        600,
+        400,
+    )
+    assert combined.crop.right == 600 - 560
 
 
 def test_combine_ignores_empty_frames_and_reports_them() -> None:
@@ -338,6 +392,29 @@ def test_preview_returns_valid_suggestion(client: TestClient) -> None:
     assert data["analyzed_frame_indices"][0] == data["frame_index"]
     assert set(data["text_frame_indices"]) <= set(data["analyzed_frame_indices"])
     assert data["skipped_frame_indices"] == []
+    samples = data["sample_frames"]
+    assert [sample["frame_index"] for sample in samples] == data[
+        "analyzed_frame_indices"
+    ]
+    for sample in samples:
+        width, _ = _png_size(sample["png_base64"])
+        assert width <= THUMBNAIL_WIDTH
+
+
+def test_full_frame_endpoint_serves_each_sampled_frame(client: TestClient) -> None:
+    preview = client.get("/api/preview").json()
+    for frame_index in preview["analyzed_frame_indices"]:
+        response = client.get(f"/api/frame/{frame_index}")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/png"
+        width, height = struct.unpack(">II", response.content[16:24])
+        assert (width, height) == (preview["frame_width"], preview["frame_height"])
+
+
+def test_full_frame_endpoint_rejects_unsampled_index(client: TestClient) -> None:
+    response = client.get("/api/frame/999999")
+    assert response.status_code == 404
+    assert "was not sampled" in response.json()["detail"]
 
 
 def test_crop_endpoint_recrops_to_requested_box(client: TestClient) -> None:
