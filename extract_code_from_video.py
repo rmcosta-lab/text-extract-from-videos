@@ -21,6 +21,7 @@ written before OCR-dependent stages where practical so failed runs stay
 inspectable.
 """
 
+import itertools
 import json
 import math
 import os
@@ -29,11 +30,11 @@ import shutil
 import subprocess
 from collections import Counter
 from collections.abc import Iterable, Iterator
-from enum import Enum
+from enum import StrEnum
 from fractions import Fraction
 from pathlib import Path
 from statistics import median
-from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol
 
 import typer
 from pydantic import BaseModel, Field, ValidationError
@@ -44,7 +45,7 @@ from rich.progress import track
 if TYPE_CHECKING:
     from cv2.typing import MatLike
 else:
-    MatLike: TypeAlias = object
+    type MatLike = object
 
 SAMPLE_STEP_BY_FPS_TIER = {30: 15, 60: 30, 120: 60}
 """Sampling step per FPS tier — roughly one candidate frame every 0.5 s."""
@@ -499,7 +500,7 @@ class CropBox(BaseModel):
             )
 
 
-class EngineName(str, Enum):
+class EngineName(StrEnum):
     """OCR engines selectable via ``--engine``."""
 
     tesseract = "tesseract"
@@ -1536,7 +1537,7 @@ def has_line_numbers(reads: list[LineRead]) -> bool:
         assert read.line_number is not None
         by_frame.setdefault(read.frame_number, []).append(read.line_number)
     for numbers in by_frame.values():
-        for previous, current in zip(numbers, numbers[1:], strict=False):
+        for previous, current in itertools.pairwise(numbers):
             total_pairs += 1
             if current > previous:
                 increasing += 1
@@ -1761,9 +1762,10 @@ def detect_missing_lines(merged: list[MergedLine]) -> list[MissingLine]:
     first_number, first_item = numbered[0]
     for absent in range(1, first_number):
         missing.append(MissingLine(line_number=absent, after=_gap_neighbor(first_item)))
-    for (previous_number, previous_item), (next_number, next_item) in zip(
-        numbered, numbered[1:], strict=False
-    ):
+    for (previous_number, previous_item), (
+        next_number,
+        next_item,
+    ) in itertools.pairwise(numbered):
         for absent in range(previous_number + 1, next_number):
             missing.append(
                 MissingLine(
@@ -2191,14 +2193,16 @@ def main(
         str | None,
         typer.Option(
             "--start-time",
-            help=f"Start timestamp for extraction; accepted forms: {TIMESTAMP_FORMAT_HELP}.",
+            help="Start timestamp for extraction; accepted forms: "
+            f"{TIMESTAMP_FORMAT_HELP}.",
         ),
     ] = None,
     end_time: Annotated[
         str | None,
         typer.Option(
             "--end-time",
-            help=f"End timestamp for extraction; accepted forms: {TIMESTAMP_FORMAT_HELP}.",
+            help="End timestamp for extraction; accepted forms: "
+            f"{TIMESTAMP_FORMAT_HELP}.",
         ),
     ] = None,
     engine_name: Annotated[
@@ -2254,11 +2258,19 @@ def main(
         f"[green]Sampling:[/green] {metadata.sampling_strategy} "
         f"(~{parameters.expected_candidate_frames} candidate frames)"
     )
+    first_label = (
+        "none"
+        if parameters.first_candidate_frame is None
+        else parameters.first_candidate_frame
+    )
+    last_label = (
+        "none"
+        if parameters.last_candidate_frame is None
+        else parameters.last_candidate_frame
+    )
     console.print(
-        f"[green]Segment:[/green] frames "
-        f"{parameters.first_candidate_frame if parameters.first_candidate_frame is not None else 'none'}"
-        f"→{parameters.last_candidate_frame if parameters.last_candidate_frame is not None else 'none'} "
-        f"on the original video timeline"
+        f"[green]Segment:[/green] frames {first_label}→{last_label} "
+        "on the original video timeline"
     )
     write_metadata(metadata, output)
     write_extraction_parameters(parameters, output)

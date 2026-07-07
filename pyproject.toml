@@ -1,0 +1,41 @@
+# Quality-gate configuration for the phase workflow ("a phase is not done
+# until ruff, mypy, and a real script run pass" — specs/tech-stack.md).
+# Tool config only: the project is two script entrypoints, not an installable
+# package; dependencies live in requirements.txt.
+
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "PL",  # pylint conventions (justifies the `noqa: PLC0415` lazy imports)
+    "RUF", # ruff-specific rules
+]
+ignore = [
+    "PLR0911", # too many return statements
+    "PLR0912", # too many branches
+    "PLR0915", # too many statements
+    "PLR0913", # too many arguments — typer CLIs and pydantic seams need them
+    "PLR2004", # magic values — thresholds/geometry literals are documented inline
+]
+allowed-confusables = ["×"] # dimension strings such as "3840×2160"
+
+[tool.mypy]
+python_version = "3.13"
+files = ["extract_code_from_video.py", "suggest_crop.py", "test_*.py"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+addopts = "-q"

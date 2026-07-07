@@ -24,7 +24,7 @@ import threading
 import webbrowser
 from pathlib import Path
 from statistics import median
-from typing import TYPE_CHECKING, Annotated, TypeAlias
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 import uvicorn
@@ -55,7 +55,7 @@ from extract_code_from_video import (
 if TYPE_CHECKING:
     from cv2.typing import MatLike
 else:
-    MatLike: TypeAlias = object
+    type MatLike = object
 
 REFERENCE_FRAME_INDEX = 30
 """First sampled frame and preview reference (falls back to the last frame)."""

@@ -1,8 +1,7 @@
 opencv-python
 numpy
-pillow
+pillow  # required by pytesseract for image handling
 pandas
-tqdm
 rich
 rapidfuzz
 scikit-image

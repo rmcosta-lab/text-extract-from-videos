@@ -62,7 +62,9 @@ def _line(text: str, *, top: int, left: int = 80, right: int = 700) -> OCRLine:
     """One upscaled-coordinate OCR line: a gutter token plus a code token."""
     code_left = left + 80
     words = [
-        OCRWord(text=text.split()[0], left=left, top=top, width=40, height=20),
+        OCRWord(
+            text=text.split(maxsplit=1)[0], left=left, top=top, width=40, height=20
+        ),
         OCRWord(
             text=text.split()[1],
             left=code_left,
