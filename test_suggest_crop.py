@@ -12,13 +12,13 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import typer
 from fastapi.testclient import TestClient
 
 from extract_code_from_video import (
     UPSCALE_FACTOR,
     CropBox,
     EngineName,
+    InvalidExtractionParameterError,
     OCREngineUnavailableError,
     OCRLine,
     OCRResult,
@@ -229,7 +229,7 @@ def test_read_sampled_frames_respects_the_time_window() -> None:
 def test_read_sampled_frames_rejects_an_inverted_window() -> None:
     if not SAMPLE_VIDEO.is_file():
         pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
-    with pytest.raises(typer.Exit):
+    with pytest.raises(InvalidExtractionParameterError):
         read_sampled_frames(SAMPLE_VIDEO, 3, start_time="5", end_time="2")
 
 

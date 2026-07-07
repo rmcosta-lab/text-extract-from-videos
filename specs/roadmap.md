@@ -185,21 +185,22 @@ gets a regression net.
 - ~~Clean `requirements.txt`: drop unused `tqdm`; note that `pillow` is a
   pytesseract dependency.~~
 
-## Phase 14 — Quality & refactoring
+## ~~Phase 14 — Quality & refactoring~~ ✅
 Goal: apply the deep review's consistency findings without behavior changes.
-- Library seams raise typed exceptions (pattern already set by
+- ~~Library seams raise typed exceptions (pattern already set by
   `InvalidVideoMetadataError`) instead of calling `_fail()`/`typer.Exit`;
   `main()` translates at the CLI boundary; `suggest_crop.py` stops catching
-  `typer.Exit` and fabricating a different message.
-- `suggest_crop.py` imports `apply_crop()` instead of re-implementing it
+  `typer.Exit` and fabricating a different message.~~
+- ~~`suggest_crop.py` imports `apply_crop()` instead of re-implementing it
   (`_apply_crop_view`); names shared across the two entrypoints become public
-  (`fail`, `require_cv2`, `console`, `MatLike`).
-- Collapse the three near-identical failure blocks in `main()` into one
+  (`fail`, `require_cv2`, `console`, `MatLike`).~~
+- ~~Collapse the three near-identical failure blocks in `main()` into one
   `_bail_with_report(...)` helper; sweep the remaining low-severity nits
   (dead `_combined_confidence` alias, duplicated OCR-result assembly tails,
   `Field(default_factory=list)` consistency, crop CLI options via
   `typer.Option(min=0)`, `_candidate_frame_window` returning a typed object,
-  `sampling_strategy` off the metadata model, crop-preview wording).
+  `sampling_strategy` set without post-construction mutation, crop-preview
+  wording).~~
 
 ## Future (not scheduled)
 - Local vision-language model.

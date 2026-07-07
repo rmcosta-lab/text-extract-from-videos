@@ -34,7 +34,15 @@ from enum import StrEnum
 from fractions import Fraction
 from pathlib import Path
 from statistics import median
-from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    NamedTuple,
+    NoReturn,
+    Protocol,
+)
 
 import typer
 from pydantic import BaseModel, Field, ValidationError
@@ -124,7 +132,7 @@ console = Console()
 err_console = Console(stderr=True)
 
 
-def _fail(message: str) -> NoReturn:
+def fail(message: str) -> NoReturn:
     """Print a styled error message and exit with status 1."""
     err_console.print(f"[bold red]Error:[/bold red] {message}")
     raise typer.Exit(code=1)
@@ -135,12 +143,12 @@ def _warn(message: str) -> None:
     err_console.print(f"[bold yellow]Warning:[/bold yellow] {message}")
 
 
-def _require_cv2() -> Any:
+def require_cv2() -> Any:
     """Import OpenCV only when video/image processing actually needs it."""
     try:
         import cv2  # noqa: PLC0415
     except ImportError:
-        _fail(
+        fail(
             "OpenCV is required to read video frames and preprocess images. "
             "Install it with [bold]python -m pip install opencv-python[/bold], "
             "then re-run."
@@ -153,7 +161,7 @@ def _require_pandas() -> Any:
     try:
         import pandas as pd  # type: ignore[import-untyped]  # noqa: PLC0415
     except ImportError:
-        _fail(
+        fail(
             "pandas is required to write ocr_raw.csv. Install it with "
             "[bold]python -m pip install pandas[/bold], then re-run."
         )
@@ -167,7 +175,7 @@ def _require_structural_similarity() -> Any:
             structural_similarity,
         )
     except ImportError:
-        _fail(
+        fail(
             "scikit-image is required for near-duplicate frame detection. "
             "Install it with [bold]python -m pip install scikit-image[/bold], "
             "then re-run."
@@ -185,8 +193,8 @@ def _validation_error_summary(exc: ValidationError) -> str:
 
 
 def _invalid_timestamp(option_name: str, value: str) -> NoReturn:
-    """Fail with one consistent timestamp-format message."""
-    _fail(
+    """Raise one consistent timestamp-format message."""
+    raise InvalidExtractionParameterError(
         f"{option_name} has invalid timestamp value {value!r}. Accepted forms: "
         f"{TIMESTAMP_FORMAT_HELP}."
     )
@@ -241,11 +249,20 @@ class VideoMetadata(BaseModel):
     codec: str | None = None
     source: Literal["ffprobe", "opencv"]
     sampling_strategy: str = ""
-    """Set by `main()` once the adaptive step is chosen from the detected FPS."""
+    """Filled by `main()` (via `model_copy`) once the adaptive step is chosen."""
 
 
 class InvalidVideoMetadataError(RuntimeError):
     """Raised when probed video metadata violates required invariants."""
+
+
+class InvalidExtractionParameterError(RuntimeError):
+    """Raised when segment/crop parameters are invalid for the video.
+
+    Library seams raise this typed error; `main()` translates it into a CLI
+    exit at the boundary, and `suggest_crop.py` reuses the message verbatim
+    for its web/JSON errors.
+    """
 
 
 def _build_video_metadata(**values: Any) -> VideoMetadata:
@@ -426,11 +443,11 @@ def _metadata_from_ffprobe(video: Path) -> VideoMetadata | None:
 
 def _metadata_from_opencv(video: Path) -> VideoMetadata:
     """Read FPS / frame count / resolution via OpenCV (codec best-effort)."""
-    cv2 = _require_cv2()
+    cv2 = require_cv2()
     capture = cv2.VideoCapture(str(video))
     try:
         if not capture.isOpened():
-            _fail(f"cannot open video with OpenCV: [cyan]{video}[/cyan]")
+            fail(f"cannot open video with OpenCV: [cyan]{video}[/cyan]")
         fps = float(capture.get(cv2.CAP_PROP_FPS))
         total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
         width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -440,7 +457,7 @@ def _metadata_from_opencv(video: Path) -> VideoMetadata:
         capture.release()
 
     if fps <= 0:
-        _fail(
+        fail(
             "FPS could not be detected by ffprobe or OpenCV; the video "
             f"[cyan]{video}[/cyan] may be corrupt or in an unsupported format."
         )
@@ -461,7 +478,7 @@ def _metadata_from_opencv(video: Path) -> VideoMetadata:
             source="opencv",
         )
     except InvalidVideoMetadataError as exc:
-        _fail(
+        fail(
             f"OpenCV returned invalid metadata for [cyan]{video}[/cyan]: {exc}. "
             "The video may be corrupt or in an unsupported format."
         )
@@ -487,14 +504,14 @@ class CropBox(BaseModel):
     bottom: int = Field(default=0, ge=0)
 
     def validate_against(self, width: int, height: int) -> None:
-        """Fail clearly if the crop leaves no image area at this resolution."""
+        """Raise clearly if the crop leaves no image area at this resolution."""
         if self.left + self.right >= width:
-            _fail(
+            raise InvalidExtractionParameterError(
                 f"crop leaves no image area: left ({self.left}) + right "
                 f"({self.right}) >= video width ({width})."
             )
         if self.top + self.bottom >= height:
-            _fail(
+            raise InvalidExtractionParameterError(
                 f"crop leaves no image area: top ({self.top}) + bottom "
                 f"({self.bottom}) >= video height ({height})."
             )
@@ -538,13 +555,23 @@ class ExtractionParameters(BaseModel):
     last_candidate_frame: int | None = Field(default=None, ge=0)
 
 
+class CandidateFrameWindow(NamedTuple):
+    """Frame bounds and candidate counts for the effective segment."""
+
+    start_frame: int
+    end_frame_exclusive: int
+    expected: int
+    first: int | None
+    last: int | None
+
+
 def _candidate_frame_window(
     metadata: VideoMetadata,
     *,
     start_seconds: float,
     end_seconds: float | None,
     step: int,
-) -> tuple[int, int, int, int | None, int | None]:
+) -> CandidateFrameWindow:
     """Convert effective segment seconds into original-video frame bounds."""
     start_frame = min(
         metadata.total_frames,
@@ -559,7 +586,7 @@ def _candidate_frame_window(
 
     frame_span = end_frame_exclusive - start_frame
     if frame_span <= 0:
-        return start_frame, end_frame_exclusive, 0, None, None
+        return CandidateFrameWindow(start_frame, end_frame_exclusive, 0, None, None)
 
     step_candidate_count = ((frame_span - 1) // step) + 1
     step_last = start_frame + (step_candidate_count - 1) * step
@@ -572,7 +599,7 @@ def _candidate_frame_window(
     expected = step_candidate_count + len(extra_forced)
     first = start_frame if expected else None
     last = max({step_last, *forced}) if expected else None
-    return start_frame, end_frame_exclusive, expected, first, last
+    return CandidateFrameWindow(start_frame, end_frame_exclusive, expected, first, last)
 
 
 def resolve_extraction_parameters(
@@ -601,14 +628,18 @@ def resolve_extraction_parameters(
     )
 
     if start_seconds < 0:
-        _fail(f"--start-time must be non-negative; got {start_seconds:g}.")
+        raise InvalidExtractionParameterError(
+            f"--start-time must be non-negative; got {start_seconds:g}."
+        )
     if requested_end_seconds is not None and requested_end_seconds < 0:
-        _fail(f"--end-time must be non-negative; got {requested_end_seconds:g}.")
+        raise InvalidExtractionParameterError(
+            f"--end-time must be non-negative; got {requested_end_seconds:g}."
+        )
     if (
         duration_seconds is not None
         and start_seconds > duration_seconds + TIMESTAMP_EPSILON
     ):
-        _fail(
+        raise InvalidExtractionParameterError(
             f"--start-time ({_format_time(start_seconds)}) is beyond the video "
             f"duration ({_format_time(duration_seconds)})."
         )
@@ -617,17 +648,17 @@ def resolve_extraction_parameters(
         and end_seconds is not None
         and end_seconds > duration_seconds + TIMESTAMP_EPSILON
     ):
-        _fail(
+        raise InvalidExtractionParameterError(
             f"--end-time ({_format_time(end_seconds)}) is beyond the video "
             f"duration ({_format_time(duration_seconds)})."
         )
     if end_seconds is not None and end_seconds <= start_seconds + TIMESTAMP_EPSILON:
-        _fail(
+        raise InvalidExtractionParameterError(
             f"--end-time ({_format_time(end_seconds)}) must be greater than "
             f"--start-time ({_format_time(start_seconds)})."
         )
 
-    start_frame, end_frame_exclusive, expected, first, last = _candidate_frame_window(
+    window = _candidate_frame_window(
         metadata,
         start_seconds=start_seconds,
         end_seconds=end_seconds,
@@ -653,14 +684,16 @@ def resolve_extraction_parameters(
             duration_seconds_available=duration_seconds,
             crop=crop,
             sample_step=step,
-            sample_start_frame=start_frame,
-            sample_end_frame_exclusive=end_frame_exclusive,
-            expected_candidate_frames=expected,
-            first_candidate_frame=first,
-            last_candidate_frame=last,
+            sample_start_frame=window.start_frame,
+            sample_end_frame_exclusive=window.end_frame_exclusive,
+            expected_candidate_frames=window.expected,
+            first_candidate_frame=window.first,
+            last_candidate_frame=window.last,
         )
     except ValidationError as exc:
-        _fail(f"invalid extraction parameters: {_validation_error_summary(exc)}")
+        raise InvalidExtractionParameterError(
+            f"invalid extraction parameters: {_validation_error_summary(exc)}"
+        ) from exc
 
 
 class SelectionStats(BaseModel):
@@ -687,13 +720,13 @@ def apply_crop(image: MatLike, crop: CropBox) -> MatLike:
 
 def _cropped_grayscale(image: MatLike, crop: CropBox) -> MatLike:
     """Crop then convert to grayscale — the input to selection and preprocessing."""
-    cv2 = _require_cv2()
+    cv2 = require_cv2()
     return cv2.cvtColor(apply_crop(image, crop), cv2.COLOR_BGR2GRAY)
 
 
 def preprocess_frame(image: MatLike, crop: CropBox) -> MatLike:
     """Prepare a frame for OCR: crop → grayscale → upscale → threshold → denoise."""
-    cv2 = _require_cv2()
+    cv2 = require_cv2()
     gray = _cropped_grayscale(image, crop)
     upscaled = cv2.resize(
         gray, None, fx=UPSCALE_FACTOR, fy=UPSCALE_FACTOR, interpolation=cv2.INTER_CUBIC
@@ -707,7 +740,7 @@ def preprocess_frame(image: MatLike, crop: CropBox) -> MatLike:
 
 def frame_sharpness(gray_image: MatLike) -> float:
     """Laplacian variance — the sharpness score for the blur gate and merging."""
-    cv2 = _require_cv2()
+    cv2 = require_cv2()
     return float(cv2.Laplacian(gray_image, cv2.CV_64F).var())
 
 
@@ -718,7 +751,7 @@ def is_frame_blurry(sharpness: float) -> bool:
 
 def _ssim_thumbnail(gray_image: MatLike) -> MatLike:
     """Shrink a grayscale frame for fast SSIM (min 7 px, skimage's window size)."""
-    cv2 = _require_cv2()
+    cv2 = require_cv2()
     height, width = gray_image.shape[:2]
     thumb_height = max(7, round(height * SSIM_COMPARE_WIDTH / width))
     return cv2.resize(
@@ -772,6 +805,20 @@ def _mean_confidence(values: Iterable[float | None]) -> float | None:
     """Mean of present confidence values, rounded for stable artifacts."""
     present = [value for value in values if value is not None]
     return round(sum(present) / len(present), 2) if present else None
+
+
+def _assemble_ocr_result(lines: list[OCRLine], confidence: float | None) -> OCRResult:
+    """Order per-line reads top-to-bottom and assemble one engine result.
+
+    Shared by both engines so the sort/aggregate contract cannot drift; each
+    engine supplies its own mean confidence (Tesseract averages word scores,
+    PaddleOCR line scores).
+    """
+    lines.sort(
+        key=lambda line: (line.top if line.top is not None else 0, line.left or 0)
+    )
+    text = "\n".join(line.text for line in lines)
+    return OCRResult(text=text, confidence=confidence, lines=lines)
 
 
 def _word_right(word: OCRWord) -> int:
@@ -903,12 +950,9 @@ class TesseractEngine:
             _build_ocr_line(words_in_line, origin_left=origin_left)
             for words_in_line in words_by_line.values()
         ]
-        lines.sort(
-            key=lambda line: (line.top if line.top is not None else 0, line.left or 0)
+        return _assemble_ocr_result(
+            lines, _mean_confidence(word.confidence for word in all_words)
         )
-        mean_confidence = _mean_confidence(word.confidence for word in all_words)
-        text = "\n".join(line.text for line in lines)
-        return OCRResult(text=text, confidence=mean_confidence, lines=lines)
 
 
 def _require_paddleocr() -> Any:
@@ -994,7 +1038,7 @@ def _paddle_models_cached() -> bool:
 def _paddle_input(image: MatLike) -> MatLike:
     """PaddleOCR expects 3-channel input; expand preprocessed grayscale frames."""
     if getattr(image, "ndim", 3) == 2:
-        cv2 = _require_cv2()
+        cv2 = require_cv2()
         return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     return image
 
@@ -1077,12 +1121,9 @@ class PaddleOCREngine:
 
         if not lines:
             return OCRResult(text="", confidence=None, lines=[])
-        lines.sort(
-            key=lambda line: (line.top if line.top is not None else 0, line.left or 0)
+        return _assemble_ocr_result(
+            lines, _mean_confidence(line.confidence for line in lines)
         )
-        mean_confidence = _mean_confidence(line.confidence for line in lines)
-        text = "\n".join(line.text for line in lines)
-        return OCRResult(text=text, confidence=mean_confidence, lines=lines)
 
 
 def create_ocr_engine(name: EngineName) -> OCREngine:
@@ -1111,11 +1152,11 @@ def sample_frames(
     parameters: ExtractionParameters,
 ) -> Iterator[tuple[int, float, MatLike]]:
     """Yield sampled frames inside the selected segment on the original timeline."""
-    cv2 = _require_cv2()
+    cv2 = require_cv2()
     capture = cv2.VideoCapture(str(video))
     try:
         if not capture.isOpened():
-            _fail(f"cannot open video for decoding: [cyan]{video}[/cyan]")
+            fail(f"cannot open video for decoding: [cyan]{video}[/cyan]")
         if parameters.expected_candidate_frames == 0:
             return
 
@@ -1137,7 +1178,7 @@ def sample_frames(
                 yield frame_number, frame_number / metadata.fps, image
             frame_number += 1
         if not decoded_any:
-            _fail(
+            fail(
                 f"video [cyan]{video}[/cyan] opened but no frames could be decoded "
                 "inside the selected segment; it may be corrupt, truncated, or in "
                 "an unsupported format."
@@ -1176,7 +1217,7 @@ def run_ocr(
     rows: list[OCRRow] = []
     stats = SelectionStats()
     outcomes: list[FrameOutcome] = []
-    cv2 = _require_cv2()
+    cv2 = require_cv2()
     structural_similarity = _require_structural_similarity()
 
     def record_outcome(frame_number: int, time_seconds: float, usable: bool) -> None:
@@ -1220,7 +1261,7 @@ def run_ocr(
         processed = preprocess_frame(image, crop)
         frame_path = frames_dir / f"frame_{frame_number}.png"
         if not cv2.imwrite(str(frame_path), processed):
-            _fail(f"could not save frame image: [cyan]{frame_path}[/cyan]")
+            fail(f"could not save frame image: [cyan]{frame_path}[/cyan]")
         result = engine.recognize(processed)
         record_outcome(frame_number, time_seconds, usable=bool(result.text.strip()))
         rows.append(
@@ -1316,11 +1357,6 @@ def _content_from_numbered_line(
     if content_words is not None:
         return _reconstruct_words(content_words, origin_left=code_origin)
     return fallback_content
-
-
-def _combined_confidence(*values: float | None) -> float | None:
-    """Mean confidence for paired OCR lines."""
-    return _mean_confidence(values)
 
 
 def _find_paired_code_line(
@@ -1488,8 +1524,8 @@ def parse_code_lines(
                         row,
                         line_number=number_only,
                         content=_line_content_from_words(code_line, code_origin),
-                        confidence=_combined_confidence(
-                            line.confidence, code_line.confidence
+                        confidence=_mean_confidence(
+                            (line.confidence, code_line.confidence)
                         ),
                     )
                 )
@@ -1894,7 +1930,7 @@ def _write_text_file(path: Path, content: str) -> None:
     try:
         path.write_text(content, "utf-8")
     except OSError as exc:
-        _fail(f"cannot write output file [cyan]{path}[/cyan]: {exc}")
+        fail(f"cannot write output file [cyan]{path}[/cyan]: {exc}")
 
 
 def write_failure_report(report: FailureReport, output: Path) -> None:
@@ -2038,7 +2074,7 @@ def _clear_stale_artifacts(output: Path) -> None:
         try:
             stale.unlink(missing_ok=True)
         except OSError as exc:
-            _fail(f"cannot remove stale output file [cyan]{stale}[/cyan]: {exc}")
+            fail(f"cannot remove stale output file [cyan]{stale}[/cyan]: {exc}")
 
 
 def _clear_frames_dir(frames_dir: Path) -> None:
@@ -2050,7 +2086,7 @@ def _clear_frames_dir(frames_dir: Path) -> None:
             else:
                 child.unlink()
         except OSError as exc:
-            _fail(f"cannot remove stale frame artifact [cyan]{child}[/cyan]: {exc}")
+            fail(f"cannot remove stale frame artifact [cyan]{child}[/cyan]: {exc}")
 
 
 def prepare_output_tree(output: Path) -> Path:
@@ -2058,22 +2094,22 @@ def prepare_output_tree(output: Path) -> Path:
     try:
         output.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        _fail(f"cannot create output directory [cyan]{output}[/cyan]: {exc}")
+        fail(f"cannot create output directory [cyan]{output}[/cyan]: {exc}")
     if not output.is_dir():
-        _fail(f"output path is not a directory: [cyan]{output}[/cyan]")
+        fail(f"output path is not a directory: [cyan]{output}[/cyan]")
 
     frames_dir = output / "frames_usados"
     try:
         frames_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        _fail(f"cannot create frames directory [cyan]{frames_dir}[/cyan]: {exc}")
+        fail(f"cannot create frames directory [cyan]{frames_dir}[/cyan]: {exc}")
 
     probe = output / ".write_probe"
     try:
         probe.touch()
         probe.unlink()
     except OSError as exc:
-        _fail(f"output directory [cyan]{output}[/cyan] is not writable: {exc}")
+        fail(f"output directory [cyan]{output}[/cyan] is not writable: {exc}")
 
     _clear_stale_artifacts(output)
     _clear_frames_dir(frames_dir)
@@ -2123,7 +2159,7 @@ def write_ocr_raw(rows: list[OCRRow], output: Path) -> None:
     try:
         frame.to_csv(csv_path, index=False)
     except OSError as exc:
-        _fail(f"cannot write output file [cyan]{csv_path}[/cyan]: {exc}")
+        fail(f"cannot write output file [cyan]{csv_path}[/cyan]: {exc}")
 
 
 def write_extracted_code(merged: list[MergedLine], output: Path) -> None:
@@ -2160,6 +2196,30 @@ def write_outputs(
     write_failure_report(report, output)
 
 
+def _bail_with_report(
+    *,
+    video: Path,
+    metadata: VideoMetadata,
+    parameters: ExtractionParameters,
+    rows: list[OCRRow],
+    stats: SelectionStats,
+    outcomes: list[FrameOutcome],
+    output: Path,
+    message: str,
+) -> NoReturn:
+    """Write inspectable artifacts for a run with no extracted lines, then fail."""
+    report = FailureReport(
+        video_path=str(video),
+        metadata=metadata,
+        stats=stats,
+        lines_extracted=0,
+        line_numbers_detected=False,
+        unextractable=unextractable_sections(outcomes),
+    )
+    write_outputs(metadata, parameters, rows, [], report, output)
+    fail(message)
+
+
 # --- CLI -------------------------------------------------------------------
 
 
@@ -2174,21 +2234,21 @@ def main(
         typer.Option(help="Path to the output directory."),
     ],
     crop_left: Annotated[
-        int | None,
-        typer.Option(help="Pixels to crop from the left edge before OCR."),
-    ] = None,
+        int,
+        typer.Option(min=0, help="Pixels to crop from the left edge before OCR."),
+    ] = 0,
     crop_top: Annotated[
-        int | None,
-        typer.Option(help="Pixels to crop from the top edge before OCR."),
-    ] = None,
+        int,
+        typer.Option(min=0, help="Pixels to crop from the top edge before OCR."),
+    ] = 0,
     crop_right: Annotated[
-        int | None,
-        typer.Option(help="Pixels to crop from the right edge before OCR."),
-    ] = None,
+        int,
+        typer.Option(min=0, help="Pixels to crop from the right edge before OCR."),
+    ] = 0,
     crop_bottom: Annotated[
-        int | None,
-        typer.Option(help="Pixels to crop from the bottom edge before OCR."),
-    ] = None,
+        int,
+        typer.Option(min=0, help="Pixels to crop from the bottom edge before OCR."),
+    ] = 0,
     start_time: Annotated[
         str | None,
         typer.Option(
@@ -2215,19 +2275,11 @@ def main(
 ) -> None:
     """Extract the source code shown in a screen-recording video."""
     if not video.exists():
-        _fail(f"video not found: [cyan]{video}[/cyan]")
+        fail(f"video not found: [cyan]{video}[/cyan]")
     if not video.is_file():
-        _fail(f"video path is not a file: [cyan]{video}[/cyan]")
+        fail(f"video path is not a file: [cyan]{video}[/cyan]")
 
-    try:
-        crop = CropBox(
-            left=crop_left or 0,
-            top=crop_top or 0,
-            right=crop_right or 0,
-            bottom=crop_bottom or 0,
-        )
-    except ValidationError:
-        _fail("crop values must be non-negative integers.")
+    crop = CropBox(left=crop_left, top=crop_top, right=crop_right, bottom=crop_bottom)
 
     frames_dir = prepare_output_tree(output)
 
@@ -2238,21 +2290,27 @@ def main(
         f"{metadata.total_frames} frames "
         f"(codec: {metadata.codec or 'unknown'}, source: {metadata.source})"
     )
-    crop.validate_against(metadata.width, metadata.height)
-
     step = adaptive_sample_step(metadata.fps)
-    parameters = resolve_extraction_parameters(
-        engine=engine_name,
-        crop=crop,
-        metadata=metadata,
-        start_time=start_time,
-        end_time=end_time,
-        step=step,
-    )
+    try:
+        crop.validate_against(metadata.width, metadata.height)
+        parameters = resolve_extraction_parameters(
+            engine=engine_name,
+            crop=crop,
+            metadata=metadata,
+            start_time=start_time,
+            end_time=end_time,
+            step=step,
+        )
+    except InvalidExtractionParameterError as exc:
+        fail(str(exc))
     segment_end = parameters.effective_end_time or "video_end_unknown"
-    metadata.sampling_strategy = (
-        f"adaptive_fps={_nearest_fps_tier(metadata.fps)},step={step},"
-        f"segment={parameters.effective_start_time}-{segment_end}"
+    metadata = metadata.model_copy(
+        update={
+            "sampling_strategy": (
+                f"adaptive_fps={_nearest_fps_tier(metadata.fps)},step={step},"
+                f"segment={parameters.effective_start_time}-{segment_end}"
+            )
+        }
     )
     console.print(
         f"[green]Sampling:[/green] {metadata.sampling_strategy} "
@@ -2276,24 +2334,25 @@ def main(
     write_extraction_parameters(parameters, output)
 
     if parameters.expected_candidate_frames == 0:
-        stats = SelectionStats()
-        report = FailureReport(
-            video_path=str(video),
+        _bail_with_report(
+            video=video,
             metadata=metadata,
-            stats=stats,
-            lines_extracted=0,
-            line_numbers_detected=False,
-        )
-        write_outputs(metadata, parameters, [], [], report, output)
-        _fail(
-            "the selected segment contains no frame timestamps to sample. "
-            "Choose a wider interval or align the segment to visible video frames."
+            parameters=parameters,
+            rows=[],
+            stats=SelectionStats(),
+            outcomes=[],
+            output=output,
+            message=(
+                "the selected segment contains no frame timestamps to sample. "
+                "Choose a wider interval or align the segment to visible video "
+                "frames."
+            ),
         )
 
     try:
         engine = create_ocr_engine(engine_name)
     except OCREngineUnavailableError as exc:
-        _fail(str(exc))
+        fail(str(exc))
 
     frames = sample_frames(video, metadata, parameters)
     rows, stats, outcomes = run_ocr(
@@ -2309,43 +2368,44 @@ def main(
         f"as blurry, {stats.frames_discarded_duplicate} as near-duplicate"
     )
     if not rows:
-        report = FailureReport(
-            video_path=str(video),
+        _bail_with_report(
+            video=video,
             metadata=metadata,
+            parameters=parameters,
+            rows=rows,
             stats=stats,
-            lines_extracted=0,
-            line_numbers_detected=False,
-            unextractable=unextractable_sections(outcomes),
-        )
-        write_outputs(metadata, parameters, rows, [], report, output)
-        _fail(
-            "every sampled frame was discarded by selection "
-            f"({stats.frames_discarded_blurry} blurry, "
-            f"{stats.frames_discarded_duplicate} near-duplicate) — nothing "
-            "to OCR. Inspect ocr_raw.csv, codigo_extraido.txt, and "
-            "relatorio_falhas.md, then check the crop region and video quality."
+            outcomes=outcomes,
+            output=output,
+            message=(
+                "every sampled frame was discarded by selection "
+                f"({stats.frames_discarded_blurry} blurry, "
+                f"{stats.frames_discarded_duplicate} near-duplicate) — nothing "
+                "to OCR. Inspect ocr_raw.csv, codigo_extraido.txt, and "
+                "relatorio_falhas.md, then check the crop region and video "
+                "quality."
+            ),
         )
     reads = parse_code_lines(rows)
     if not reads:
-        report = FailureReport(
-            video_path=str(video),
+        _bail_with_report(
+            video=video,
             metadata=metadata,
+            parameters=parameters,
+            rows=rows,
             stats=stats,
-            lines_extracted=0,
-            line_numbers_detected=False,
-            unextractable=unextractable_sections(outcomes),
-        )
-        write_outputs(metadata, parameters, rows, [], report, output)
-        _fail(
-            f"OCR ran on {len(rows)} frame(s) but recognized no text in any "
-            "of them. Inspect "
-            f"[cyan]{output / 'ocr_raw.csv'}[/cyan], "
-            f"[cyan]{output / 'codigo_extraido.txt'}[/cyan], "
-            f"[cyan]{output / 'relatorio_falhas.md'}[/cyan], and the frames "
-            f"in [cyan]{frames_dir}[/cyan]. "
-            "Check that the crop region contains the code, and consider a "
-            "larger editor font, a higher recording resolution, or a "
-            "high-contrast editor theme."
+            outcomes=outcomes,
+            output=output,
+            message=(
+                f"OCR ran on {len(rows)} frame(s) but recognized no text in any "
+                "of them. Inspect "
+                f"[cyan]{output / 'ocr_raw.csv'}[/cyan], "
+                f"[cyan]{output / 'codigo_extraido.txt'}[/cyan], "
+                f"[cyan]{output / 'relatorio_falhas.md'}[/cyan], and the frames "
+                f"in [cyan]{frames_dir}[/cyan]. "
+                "Check that the crop region contains the code, and consider a "
+                "larger editor font, a higher recording resolution, or a "
+                "high-contrast editor theme."
+            ),
         )
     numbered = has_line_numbers(reads)
     uncertain_confidence = uncertain_confidence_for(engine_name)
