@@ -1,14 +1,19 @@
 """Suggest crop parameters for a video and preview them in a local web page.
 
-Phase 10: read a reference frame (frame 30) from the video, OCR it with the
-selected engine (Tesseract default, PaddleOCR optional), and derive a crop box
-that isolates the line-number gutter plus the code text. A small FastAPI
-server (bound to 127.0.0.1) serves a single static page showing the frame
-before and after the crop; editing the values re-crops the cached frame on the
-backend and refreshes the preview. The confirmed values are meant to be copied
-into `extract_code_from_video.py --crop-*` — this tool never runs a full
-extraction and never applies a crop silently. Empty OCR on the reference frame
-yields a zero crop with an explicit "no text detected" notice, never a
+Sample several frames spread across the video's duration (or across the
+`--start-time`/`--end-time` window, validated with the same rules and
+timestamp formats as the extraction CLI), OCR each with the selected engine
+(Tesseract default, PaddleOCR optional), and combine the per-frame text
+geometry into one crop box that isolates the line-number gutter plus the
+code text in **every** sampled frame — code scrolls and line numbers grow
+wider over time, so a single frame is not representative. A
+small FastAPI server (bound to 127.0.0.1) serves a single static page showing
+a representative frame before and after the crop; editing the values re-crops
+the cached frame on the backend and refreshes the preview. The confirmed
+values are meant to be copied into `extract_code_from_video.py --crop-*` —
+this tool never runs a full extraction and never applies a crop silently.
+Frames with empty OCR contribute nothing; if no sampled frame yields text the
+suggestion is a zero crop with an explicit "no text detected" notice, never a
 fabricated region. All video/metadata/preprocessing/engine logic is imported
 from `extract_code_from_video.py`, not re-implemented.
 """
@@ -23,12 +28,14 @@ from typing import TYPE_CHECKING, Annotated, TypeAlias
 
 import typer
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
+from rich.progress import track
 
 from extract_code_from_video import (
     LINE_NUMBER_WORD_RE,
+    TIMESTAMP_FORMAT_HELP,
     UPSCALE_FACTOR,
     CropBox,
     EngineName,
@@ -38,9 +45,11 @@ from extract_code_from_video import (
     OCRResult,
     _fail,
     _require_cv2,
+    console,
     create_ocr_engine,
     get_video_metadata,
     preprocess_frame,
+    resolve_extraction_parameters,
 )
 
 if TYPE_CHECKING:
@@ -49,7 +58,10 @@ else:
     MatLike: TypeAlias = object
 
 REFERENCE_FRAME_INDEX = 30
-"""Frame used as the crop-suggestion reference (falls back to the last frame)."""
+"""First sampled frame and preview reference (falls back to the last frame)."""
+
+DEFAULT_SAMPLE_COUNT = 12
+"""Frames sampled across the video's duration for the combined suggestion."""
 
 CROP_MARGIN_FACTOR = 1.0
 """Margin around the detected text block, as a fraction of the median line height."""
@@ -69,6 +81,9 @@ SEGMENT_GAP_FRACTION = 0.05
 MIN_SEGMENT_CONFIDENCE = 50.0
 """Right-side segments below this mean confidence are treated as UI noise
 (minimap, scrollbar) and excluded from the suggested crop."""
+
+THUMBNAIL_WIDTH = 480
+"""Sampled-frame thumbnails are downscaled to this width for the preview page."""
 
 RICH_MARKUP_RE = re.compile(r"\[/?[a-z ]+\]")
 """Rich console tags stripped from reused error messages before web display."""
@@ -100,15 +115,45 @@ class WordBox(BaseModel):
     bottom: float = Field(gt=0)
 
 
+class TextGeometry(BaseModel):
+    """Geometry of the text detected in one frame, in original-frame pixels."""
+
+    left: float
+    """Left edge of the line-number gutter (or of the kept text)."""
+    top: float
+    bottom: float
+    text_right: float
+    """Right edge of the kept (non-noise) text."""
+    noise_left: float | None = None
+    """Left edge of the low-confidence noise column (minimap), when detected."""
+    line_height: float
+    """Median height of the kept words, used to derive the crop margin."""
+    gutter_anchored: bool = False
+    """Whether the band was anchored on a detected line-number gutter (the
+    cluster fallback can sweep in menu/status chrome, so it ranks lower)."""
+
+
+class FrameObservation(BaseModel):
+    """One sampled frame's OCR outcome: its text geometry, or none at all."""
+
+    frame_index: int
+    text: TextGeometry | None = None
+
+
 class CropSuggestion(BaseModel):
-    """Suggested crop for the reference frame, with an honesty flag."""
+    """Combined crop suggestion, with an honesty flag and sampling info."""
 
     crop: CropBox
     text_detected: bool
+    analyzed_frame_indices: list[int] = []
+    text_frame_indices: list[int] = []
+    """Frames whose detected text informed the combined crop."""
+    skipped_frame_indices: list[int] = []
+    """Sampled indices that could not be decoded from the video."""
 
 
 class ReferenceFrame(BaseModel):
-    """The decoded reference frame plus which index was actually used."""
+    """One decoded frame plus which index was actually used."""
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -116,6 +161,20 @@ class ReferenceFrame(BaseModel):
     frame_index: int
     width: int
     height: int
+
+
+class SampledFrames(BaseModel):
+    """The decoded sample frames; the first one doubles as the preview frame."""
+
+    frames: list[ReferenceFrame] = Field(min_length=1)
+    failed_indices: list[int] = []
+
+
+class SampleFrameThumbnail(BaseModel):
+    """One sampled frame's index and downscaled preview image."""
+
+    frame_index: int
+    png_base64: str
 
 
 class PreviewResponse(BaseModel):
@@ -127,6 +186,10 @@ class PreviewResponse(BaseModel):
     frame_width: int
     frame_height: int
     text_detected: bool
+    analyzed_frame_indices: list[int]
+    text_frame_indices: list[int]
+    skipped_frame_indices: list[int]
+    sample_frames: list[SampleFrameThumbnail]
     crop: CropBox
     cli_flags: str
     original_png_base64: str
@@ -157,31 +220,89 @@ def _plain(message: str) -> str:
     return RICH_MARKUP_RE.sub("", message)
 
 
-def read_reference_frame(
-    video: Path, index: int = REFERENCE_FRAME_INDEX
-) -> ReferenceFrame:
-    """Decode the reference frame, falling back to the last frame if shorter."""
+def sample_frame_indices(
+    total_frames: int,
+    count: int,
+    start_frame: int = 0,
+    end_frame_exclusive: int | None = None,
+) -> list[int]:
+    """Evenly spaced indices across the sampling window (whole video default).
+
+    Without an explicit window start, sampling begins at the reference frame
+    to skip recording-start artifacts; an explicit ``start_frame`` (from
+    ``--start-time``) is respected exactly.
+    """
+    if end_frame_exclusive is None:
+        end_frame_exclusive = total_frames
+    last = max(0, min(total_frames, end_frame_exclusive) - 1)
+    first = min(start_frame or min(REFERENCE_FRAME_INDEX, last), last)
+    if count <= 1 or first == last:
+        return [first]
+    step = (last - first) / (count - 1)
+    return sorted({round(first + step * position) for position in range(count)})
+
+
+def read_sampled_frames(
+    video: Path,
+    count: int = DEFAULT_SAMPLE_COUNT,
+    start_time: str | None = None,
+    end_time: str | None = None,
+) -> SampledFrames:
+    """Decode the sampled frames in one capture session.
+
+    ``start_time``/``end_time`` limit sampling to a window of the video,
+    validated against the metadata with the same rules and timestamp formats
+    as the extraction CLI. Frames that fail to decode are recorded in
+    ``failed_indices`` and skipped; only a video where *no* sampled frame
+    decodes is an error.
+    """
     cv2 = _require_cv2()
     metadata = get_video_metadata(video)
-    frame_index = min(index, metadata.total_frames - 1)
+    # Engine and crop are just recorded by the extraction parameters; only
+    # the validated frame window is consumed here.
+    window = resolve_extraction_parameters(
+        engine=EngineName.tesseract,
+        crop=CropBox(),
+        metadata=metadata,
+        start_time=start_time,
+        end_time=end_time,
+        step=1,
+    )
+    indices = sample_frame_indices(
+        metadata.total_frames,
+        count,
+        start_frame=window.sample_start_frame,
+        end_frame_exclusive=window.sample_end_frame_exclusive,
+    )
     capture = cv2.VideoCapture(str(video))
+    frames: list[ReferenceFrame] = []
+    failed: list[int] = []
     try:
         if not capture.isOpened():
             raise ReferenceFrameError(f"cannot open video for decoding: {video}")
-        if frame_index:
-            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-        ok, image = capture.read()
-        if not ok:
-            raise ReferenceFrameError(
-                f"could not decode frame {frame_index} of {video}; the video may "
-                "be corrupt, truncated, or in an unsupported format."
+        for frame_index in track(
+            indices, description="Decoding sampled frames...", console=console
+        ):
+            if frame_index:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+            ok, image = capture.read()
+            if not ok:
+                failed.append(frame_index)
+                continue
+            height, width = image.shape[:2]
+            frames.append(
+                ReferenceFrame(
+                    image=image, frame_index=frame_index, width=width, height=height
+                )
             )
     finally:
         capture.release()
-    height, width = image.shape[:2]
-    return ReferenceFrame(
-        image=image, frame_index=frame_index, width=width, height=height
-    )
+    if not frames:
+        raise ReferenceFrameError(
+            f"could not decode any sampled frame ({indices}) of {video}; the "
+            "video may be corrupt, truncated, or in an unsupported format."
+        )
+    return SampledFrames(frames=frames, failed_indices=failed)
 
 
 def _line_boxes(lines: list[OCRLine]) -> list[TextBox]:
@@ -325,25 +446,21 @@ def _keep_confident_segments(
     return kept, None
 
 
-def suggest_crop(frame: ReferenceFrame, engine: OCREngine) -> CropSuggestion:
-    """OCR the reference frame and derive an edge-based crop around the text.
+def observe_frame(frame: ReferenceFrame, engine: OCREngine) -> FrameObservation:
+    """OCR one frame and record the geometry of the text it shows.
 
     The frame goes through the same preprocessing as the extraction pipeline
     (zero crop), so OCR geometry comes back in upscaled coordinates and is
     mapped down by ``UPSCALE_FACTOR``. The vertical extent is anchored on the
     line-number gutter when one is detected (excluding menu/tab/status rows);
     otherwise it falls back to the largest vertical cluster of text lines.
-    The right edge is deliberately conservative: it removes only the
-    low-confidence noise column (minimap, scrollbar), cutting where that
-    column starts — never at the end of the code text, since short lines
-    would make that crop far too aggressive. Empty OCR yields a zero crop and
-    ``text_detected=False`` — the suggestion never invents a region.
+    Empty OCR yields ``text=None`` — an observation never invents a region.
     """
     processed = preprocess_frame(frame.image, CropBox())
     result: OCRResult = engine.recognize(processed)
     words = _word_boxes(result.lines)
     if not words:
-        return CropSuggestion(crop=CropBox(), text_detected=False)
+        return FrameObservation(frame_index=frame.frame_index)
 
     gutter = _gutter_column(words)
     if gutter is not None:
@@ -359,16 +476,103 @@ def suggest_crop(frame: ReferenceFrame, engine: OCREngine) -> CropSuggestion:
     # With a gutter, nothing left of it belongs to the code (activity bar,
     # breakpoint column); the gutter itself is the true left edge.
     x0 = min(word.left for word in gutter or kept)
-
-    median_height = median(word.bottom - word.top for word in kept)
-    margin = max(MIN_CROP_MARGIN_PX, round(median_height * CROP_MARGIN_FACTOR))
-    crop = CropBox(
-        left=max(0, round(x0) - margin),
-        top=max(0, round(y0) - margin),
-        right=0 if noise_left is None else max(0, frame.width - round(noise_left)),
-        bottom=max(0, frame.height - round(y1) - margin),
+    return FrameObservation(
+        frame_index=frame.frame_index,
+        text=TextGeometry(
+            left=x0,
+            top=y0,
+            bottom=y1,
+            text_right=max(word.right for word in kept),
+            noise_left=noise_left,
+            line_height=median(word.bottom - word.top for word in kept),
+            gutter_anchored=gutter is not None,
+        ),
     )
-    return CropSuggestion(crop=crop, text_detected=True)
+
+
+def combine_observations(
+    observations: list[FrameObservation],
+    frame_width: int,
+    frame_height: int,
+    skipped_frame_indices: list[int] | None = None,
+) -> CropSuggestion:
+    """Merge per-frame observations into one crop safe for every frame.
+
+    Gutter-anchored observations outrank cluster-fallback ones: the fallback
+    band can sweep in menu/status chrome and reflections, so it informs the
+    crop only when no sampled frame found a gutter (the same precedence
+    ``observe_frame`` applies within a frame). Among the informing frames,
+    left/top/bottom take the union of the detected text bands, so the widest
+    observed gutter and the tallest text block are never cut. The right edge
+    cuts only when a majority of the informing frames detected a noise column
+    (minimap, scrollbar), and then at the rightmost detected noise start —
+    never at the end of the code, since short lines would make that crop far
+    too aggressive. Kept text reaching past that boundary in other frames is
+    junk that leaked through the per-frame confidence filter (the noise
+    column sits at a fixed x across frames), so it does not push the cut
+    right. Empty-OCR observations contribute nothing; when none has text the
+    result is a zero crop with ``text_detected=False``.
+    """
+    analyzed = [observation.frame_index for observation in observations]
+    skipped = skipped_frame_indices or []
+    candidates = [
+        (obs.frame_index, obs.text) for obs in observations if obs.text is not None
+    ]
+    anchored = [(index, g) for index, g in candidates if g.gutter_anchored]
+    informing = anchored or candidates
+    geometries = [g for _, g in informing]
+    if not geometries:
+        return CropSuggestion(
+            crop=CropBox(),
+            text_detected=False,
+            analyzed_frame_indices=analyzed,
+            skipped_frame_indices=skipped,
+        )
+
+    line_height = median(geometry.line_height for geometry in geometries)
+    margin = max(MIN_CROP_MARGIN_PX, round(line_height * CROP_MARGIN_FACTOR))
+    noise_lefts = [g.noise_left for g in geometries if g.noise_left is not None]
+    if 2 * len(noise_lefts) > len(geometries):
+        right = max(0, frame_width - round(max(noise_lefts)))
+    else:
+        right = 0
+    crop = CropBox(
+        left=max(0, round(min(g.left for g in geometries)) - margin),
+        top=max(0, round(min(g.top for g in geometries)) - margin),
+        right=right,
+        bottom=max(0, frame_height - round(max(g.bottom for g in geometries)) - margin),
+    )
+    return CropSuggestion(
+        crop=crop,
+        text_detected=True,
+        analyzed_frame_indices=analyzed,
+        text_frame_indices=[index for index, _ in informing],
+        skipped_frame_indices=skipped,
+    )
+
+
+def suggest_crop(frame: ReferenceFrame, engine: OCREngine) -> CropSuggestion:
+    """Single-frame suggestion: observe one frame and combine it alone."""
+    return combine_observations(
+        [observe_frame(frame, engine)], frame.width, frame.height
+    )
+
+
+def suggest_crop_for_video(samples: SampledFrames, engine: OCREngine) -> CropSuggestion:
+    """Observe every sampled frame and combine them into one video-wide crop."""
+    observations = [
+        observe_frame(frame, engine)
+        for frame in track(
+            samples.frames, description="OCR on sampled frames...", console=console
+        )
+    ]
+    reference = samples.frames[0]
+    return combine_observations(
+        observations,
+        reference.width,
+        reference.height,
+        skipped_frame_indices=samples.failed_indices,
+    )
 
 
 def cli_flags(crop: CropBox) -> str:
@@ -391,13 +595,28 @@ def _crop_error(crop: CropBox, width: int, height: int) -> str | None:
     return None
 
 
-def _png_base64(image: MatLike) -> str:
-    """Encode an image as a base64 PNG string for JSON transport."""
+def _png_bytes(image: MatLike) -> bytes:
+    """Encode an image as PNG bytes."""
     cv2 = _require_cv2()
     ok, buffer = cv2.imencode(".png", image)
     if not ok:
         raise RuntimeError("could not encode the preview image as PNG.")
-    return base64.b64encode(buffer.tobytes()).decode("ascii")
+    return buffer.tobytes()
+
+
+def _png_base64(image: MatLike) -> str:
+    """Encode an image as a base64 PNG string for JSON transport."""
+    return base64.b64encode(_png_bytes(image)).decode("ascii")
+
+
+def _thumbnail(image: MatLike, width: int = THUMBNAIL_WIDTH) -> MatLike:
+    """Downscale a frame to thumbnail width (no-op when already narrower)."""
+    cv2 = _require_cv2()
+    full_height, full_width = image.shape[:2]
+    if full_width <= width:
+        return image
+    height = max(1, round(full_height * width / full_width))
+    return cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
 
 
 def _apply_crop_view(frame: ReferenceFrame, crop: CropBox) -> MatLike:
@@ -407,18 +626,37 @@ def _apply_crop_view(frame: ReferenceFrame, crop: CropBox) -> MatLike:
     ]
 
 
-def create_app(video: Path, default_engine: EngineName) -> FastAPI:
-    """Build the preview app: decode frame 30 and suggest the default crop eagerly.
+def create_app(
+    video: Path,
+    default_engine: EngineName,
+    sample_count: int = DEFAULT_SAMPLE_COUNT,
+    start_time: str | None = None,
+    end_time: str | None = None,
+) -> FastAPI:
+    """Build the preview app: sample frames and suggest the default crop eagerly.
 
-    Failures (unreadable video, missing OCR backend) surface here, before the
-    server starts. Suggestions are cached per engine; re-crops reuse the cached
-    frame without reopening the video.
+    Failures (unreadable video, invalid time window, missing OCR backend)
+    surface here, before the server starts. The first sampled frame is the
+    before/after preview image; suggestions combine all sampled frames and
+    are cached per engine, and re-crops reuse the cached frame without
+    reopening the video.
     """
-    frame = read_reference_frame(video)
+    samples = read_sampled_frames(video, sample_count, start_time, end_time)
+    frame = samples.frames[0]
     suggestions: dict[EngineName, CropSuggestion] = {
-        default_engine: suggest_crop(frame, create_ocr_engine(default_engine))
+        default_engine: suggest_crop_for_video(
+            samples, create_ocr_engine(default_engine)
+        )
     }
     original_png = _png_base64(frame.image)
+    thumbnails = [
+        SampleFrameThumbnail(
+            frame_index=sample.frame_index,
+            png_base64=_png_base64(_thumbnail(sample.image)),
+        )
+        for sample in samples.frames
+    ]
+    frames_by_index = {sample.frame_index: sample for sample in samples.frames}
     page = (Path(__file__).parent / "crop_preview.html").read_text(encoding="utf-8")
 
     app = FastAPI(title="Crop suggestion preview")
@@ -427,11 +665,24 @@ def create_app(video: Path, default_engine: EngineName) -> FastAPI:
     def index() -> str:
         return page
 
+    @app.get("/api/frame/{frame_index}")
+    def full_frame(frame_index: int) -> Response:
+        sample = frames_by_index.get(frame_index)
+        if sample is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"frame {frame_index} was not sampled; available frames: "
+                f"{sorted(frames_by_index)}",
+            )
+        return Response(content=_png_bytes(sample.image), media_type="image/png")
+
     @app.get("/api/preview")
     def preview(engine: EngineName = default_engine) -> PreviewResponse:
         if engine not in suggestions:
             try:
-                suggestions[engine] = suggest_crop(frame, create_ocr_engine(engine))
+                suggestions[engine] = suggest_crop_for_video(
+                    samples, create_ocr_engine(engine)
+                )
             except OCREngineUnavailableError as exc:
                 raise HTTPException(status_code=400, detail=_plain(str(exc))) from exc
         suggestion = suggestions[engine]
@@ -442,6 +693,10 @@ def create_app(video: Path, default_engine: EngineName) -> FastAPI:
             frame_width=frame.width,
             frame_height=frame.height,
             text_detected=suggestion.text_detected,
+            analyzed_frame_indices=suggestion.analyzed_frame_indices,
+            text_frame_indices=suggestion.text_frame_indices,
+            skipped_frame_indices=suggestion.skipped_frame_indices,
+            sample_frames=thumbnails,
             crop=suggestion.crop,
             cli_flags=cli_flags(suggestion.crop),
             original_png_base64=original_png,
@@ -478,6 +733,26 @@ def main(
         EngineName,
         typer.Option(help="OCR engine for the crop suggestion."),
     ] = EngineName.tesseract,
+    sample_count: Annotated[
+        int,
+        typer.Option(min=1, help="Frames sampled across the video for the suggestion."),
+    ] = DEFAULT_SAMPLE_COUNT,
+    start_time: Annotated[
+        str | None,
+        typer.Option(
+            "--start-time",
+            help="Sample frames from this timestamp on; accepted forms: "
+            f"{TIMESTAMP_FORMAT_HELP}.",
+        ),
+    ] = None,
+    end_time: Annotated[
+        str | None,
+        typer.Option(
+            "--end-time",
+            help="Sample frames up to this timestamp; accepted forms: "
+            f"{TIMESTAMP_FORMAT_HELP}.",
+        ),
+    ] = None,
     host: Annotated[
         str, typer.Option(help="Interface to bind; keep the local default.")
     ] = "127.0.0.1",
@@ -490,7 +765,7 @@ def main(
     if not video.is_file():
         _fail(f"video file not found: [cyan]{video}[/cyan]")
     try:
-        app = create_app(video, engine)
+        app = create_app(video, engine, sample_count, start_time, end_time)
     except (ReferenceFrameError, OCREngineUnavailableError) as exc:
         _fail(str(exc))
 
