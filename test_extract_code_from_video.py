@@ -1,15 +1,19 @@
 """Pure-function tests for the fidelity-critical reconstruction pipeline.
 
-No video, OpenCV, or OCR backend is needed: every function under test
-operates on pydantic models, mirroring the FakeEngine approach proven in
-`test_suggest_crop.py`.
+Most functions under test operate on pydantic models — no video, OpenCV, or
+OCR backend needed, mirroring the FakeEngine approach proven in
+`test_suggest_crop.py`. The one exception is `run_ocr`'s duplicate-outcome
+logic, which is exercised with small synthetic frames and skipped when
+OpenCV / scikit-image are unavailable.
 """
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from extract_code_from_video import (
+    CropBox,
     EngineName,
     FrameOutcome,
     InvalidExtractionParameterError,
@@ -17,6 +21,7 @@ from extract_code_from_video import (
     MergedLine,
     MissingLine,
     OCRLine,
+    OCRResult,
     OCRRow,
     OCRWord,
     VideoMetadata,
@@ -26,12 +31,14 @@ from extract_code_from_video import (
     _missing_line_entries,
     _parse_timestamp,
     _reconstruct_words,
+    adaptive_sample_step,
     detect_missing_lines,
     has_line_numbers,
     merge_ocr_results,
     parse_code_lines,
     prepare_output_tree,
     reconstruct_by_time,
+    run_ocr,
     uncertain_confidence_for,
     unextractable_sections,
     write_extracted_code,
@@ -363,6 +370,50 @@ def test_missing_line_entries_collapse_leading_run_into_one_range() -> None:
     assert "Linha 501" in entries[1]
 
 
+def test_missing_line_entries_collapse_long_interior_run() -> None:
+    # A single wide interior gap (e.g. a misread gutter number) must not emit
+    # one line each; lines 2..19 collapse into one range entry. Starting at
+    # line 1 keeps this an interior (before + after) run, not a leading one.
+    missing = detect_missing_lines(
+        [_merged("a", number=1), _merged("b", number=20, frame=9)]
+    )
+    entries = _missing_line_entries(missing)
+    assert len(missing) == 18
+    assert len(entries) == 1
+    assert entries[0].startswith("Linhas 2 a 19 possivelmente ausentes entre os tempos")
+
+
+def test_missing_line_entries_keep_short_gaps_itemized() -> None:
+    # A 2-line interior gap stays itemized (each line is still worth naming).
+    missing = detect_missing_lines([_merged("a", number=1), _merged("b", number=4)])
+    entries = _missing_line_entries(missing)
+    assert len(missing) == 2
+    assert len(entries) == 2
+    assert entries[0].startswith("Linha 2 possivelmente ausente")
+    assert entries[1].startswith("Linha 3 possivelmente ausente")
+
+
+# --- adaptive sampling step -------------------------------------------------
+
+
+def test_adaptive_sample_step_preserves_canonical_tiers() -> None:
+    assert adaptive_sample_step(30.0) == 15
+    assert adaptive_sample_step(60.0) == 30
+    assert adaptive_sample_step(120.0) == 60
+
+
+def test_adaptive_sample_step_snaps_atypical_high_rates_to_tiers() -> None:
+    assert adaptive_sample_step(25.0) == 15  # nearest 30
+    assert adaptive_sample_step(50.0) == 30  # nearest 60
+    assert adaptive_sample_step(240.0) == 60  # nearest 120
+
+
+def test_adaptive_sample_step_uses_half_rate_below_the_low_fps_floor() -> None:
+    assert adaptive_sample_step(10.0) == 5
+    assert adaptive_sample_step(23.0) == 12
+    assert adaptive_sample_step(1.0) == 1  # never zero
+
+
 def test_unextractable_sections_group_consecutive_unusable_frames() -> None:
     outcomes = [
         FrameOutcome(
@@ -432,3 +483,53 @@ def test_prepare_output_tree_clears_previous_run_artifacts(tmp_path: Path) -> No
 def test_missing_line_model_allows_absent_neighbors() -> None:
     entry = MissingLine(line_number=1)
     assert entry.before is None and entry.after is None
+
+
+# --- run_ocr duplicate outcomes ---------------------------------------------
+
+
+class _FixedEngine:
+    """OCR engine stub returning the same result for every frame."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def recognize(self, image: Any) -> OCRResult:
+        return OCRResult(text=self._text, confidence=90.0 if self._text else None)
+
+
+def _identical_noise_frames(count: int) -> list[tuple[int, float, Any]]:
+    """Byte-identical textured frames: each after the first is a near-duplicate.
+
+    Random texture keeps them above the blur threshold; being identical drives
+    SSIM to 1.0 so every frame after the first is discarded as a duplicate.
+    """
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(0)
+    base = rng.integers(0, 256, size=(200, 300, 3), dtype=np.uint8)
+    return [(index, index / 30.0, base.copy()) for index in range(count)]
+
+
+def test_run_ocr_duplicate_inherits_empty_neighbor_outcome(tmp_path: Path) -> None:
+    pytest.importorskip("cv2")
+    pytest.importorskip("skimage")
+    frames = _identical_noise_frames(3)
+    _rows, stats, outcomes = run_ocr(
+        iter(frames), _FixedEngine(""), tmp_path, 3, CropBox()
+    )
+    assert stats.frames_discarded_duplicate == 2
+    # The accepted frame's OCR was blank, so the duplicates it "covers" are
+    # still unextractable — not silently marked usable.
+    assert [outcome.usable for outcome in outcomes] == [False, False, False]
+
+
+def test_run_ocr_duplicate_inherits_usable_neighbor_outcome(tmp_path: Path) -> None:
+    pytest.importorskip("cv2")
+    pytest.importorskip("skimage")
+    frames = _identical_noise_frames(3)
+    rows, stats, outcomes = run_ocr(
+        iter(frames), _FixedEngine("codigo()"), tmp_path, 3, CropBox()
+    )
+    assert stats.frames_discarded_duplicate == 2
+    assert len(rows) == 1  # only the accepted frame is OCR'd
+    assert [outcome.usable for outcome in outcomes] == [True, True, True]

@@ -58,6 +58,10 @@ else:
 SAMPLE_STEP_BY_FPS_TIER = {30: 15, 60: 30, 120: 60}
 """Sampling step per FPS tier — roughly one candidate frame every 0.5 s."""
 
+LOW_FPS_THRESHOLD = 24.0
+"""Below this FPS the tiers are too coarse (they would sample far apart), so the
+step is computed directly from the rate instead of snapped to a tier."""
+
 FORCED_SAMPLE_FRAMES = (1, 15)
 """Original-video frame numbers that are always sampled when inside the segment."""
 
@@ -460,6 +464,13 @@ def _metadata_from_opencv(video: Path) -> VideoMetadata:
         fail(
             "FPS could not be detected by ffprobe or OpenCV; the video "
             f"[cyan]{video}[/cyan] may be corrupt or in an unsupported format."
+        )
+    if total_frames <= 0:
+        fail(
+            "the video frame count could not be determined by OpenCV for "
+            f"[cyan]{video}[/cyan] (some containers do not expose it). Install "
+            "ffprobe ([bold]brew install ffmpeg[/bold] on macOS) for reliable "
+            "metadata, then re-run."
         )
     codec = None
     if fourcc:
@@ -1142,7 +1153,15 @@ def _nearest_fps_tier(fps: float) -> int:
 
 
 def adaptive_sample_step(fps: float) -> int:
-    """Sampling step for the detected FPS — one candidate roughly every 0.5 s."""
+    """Sampling step for the detected FPS — one candidate roughly every 0.5 s.
+
+    Canonical screen-recording rates snap to the 30/60/120 tiers (unchanged).
+    Rates below ``LOW_FPS_THRESHOLD`` (lightweight recorders) use ``fps / 2``
+    directly: snapping a 10 fps video to the 30 tier would sample only every
+    1.5 s and silently skip fast scrolling between candidates.
+    """
+    if fps < LOW_FPS_THRESHOLD:
+        return max(1, round(fps / 2))
     return SAMPLE_STEP_BY_FPS_TIER[_nearest_fps_tier(fps)]
 
 
@@ -1163,6 +1182,13 @@ def sample_frames(
         frame_number = parameters.sample_start_frame
         if frame_number:
             capture.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+            landed = int(capture.get(cv2.CAP_PROP_POS_FRAMES))
+            if landed != frame_number:
+                _warn(
+                    f"frame seek to {frame_number} landed on {landed} (the "
+                    "decoder may only seek to keyframes); reported frame "
+                    "numbers and timestamps in the outputs may be approximate."
+                )
 
         decoded_any = False
         while frame_number < parameters.sample_end_frame_exclusive:
@@ -1231,6 +1257,7 @@ def run_ocr(
         )
 
     last_accepted_thumbnail: MatLike | None = None
+    last_accepted_usable = False
     progress = track(
         frames,
         total=expected_samples,
@@ -1252,9 +1279,10 @@ def run_ocr(
             )
             if score > SSIM_THRESHOLD:
                 stats.frames_discarded_duplicate += 1
-                # The accepted neighbor already carries this frame's content,
-                # so the span is covered — not "impossible to extract".
-                record_outcome(frame_number, time_seconds, usable=True)
+                # A near-duplicate is covered by the accepted neighbor only when
+                # that neighbor actually yielded text; if the neighbor's OCR was
+                # blank the span is still unread, not "impossible to extract".
+                record_outcome(frame_number, time_seconds, usable=last_accepted_usable)
                 continue
         last_accepted_thumbnail = thumbnail
 
@@ -1263,7 +1291,8 @@ def run_ocr(
         if not cv2.imwrite(str(frame_path), processed):
             fail(f"could not save frame image: [cyan]{frame_path}[/cyan]")
         result = engine.recognize(processed)
-        record_outcome(frame_number, time_seconds, usable=bool(result.text.strip()))
+        last_accepted_usable = bool(result.text.strip())
+        record_outcome(frame_number, time_seconds, usable=last_accepted_usable)
         rows.append(
             OCRRow(
                 text=result.text,
@@ -1857,6 +1886,11 @@ CAPTURE_RECOMMENDATIONS = [
 BLURRY_SHARE_WARNING = 0.3
 """Above this share of blurry discards, the report reinforces slower scrolling."""
 
+MISSING_RUN_COLLAPSE_MIN = 4
+"""A contiguous run of this many absent line numbers is rendered as one range
+entry instead of one line each, so a single gutter misread cannot flood the
+report; shorter runs stay itemized because each line is still worth naming."""
+
 
 def _missing_line_entry(missing: MissingLine) -> str:
     """Render one missing line per the README phrasing, without inventing times."""
@@ -1886,31 +1920,59 @@ def _missing_line_entry(missing: MissingLine) -> str:
     )
 
 
-def _missing_line_entries(missing: list[MissingLine]) -> list[str]:
-    """Render missing lines, collapsing the leading never-shown run into a range.
+def _collapsed_run_entry(run: list[MissingLine]) -> str:
+    """Render a contiguous run of absent line numbers as one range entry.
 
-    Numbering that starts above 1 yields one gap per absent leading number;
-    listing hundreds of them would drown real scroll gaps in noise, so the
-    contiguous leading run (no before-neighbor) becomes a single range entry.
+    A leading run (no before-neighbor) is the "never shown in the video" case;
+    an interior run is bounded by the surrounding extracted lines' timestamps.
     The report's total count is untouched — only the listing is condensed.
     """
-    leading = 0
-    while leading < len(missing) and missing[leading].before is None:
-        leading += 1
-    if leading < 2:
-        return [_missing_line_entry(item) for item in missing]
+    first, last = run[0], run[-1]
+    numbers = f"Linhas {first.line_number} a {last.line_number}"
+    if first.before is None:
+        window = (
+            f" (primeira linha extraída vista no tempo {last.after.time_formatted})"
+            if last.after is not None
+            else ""
+        )
+        return f"{numbers} nunca exibidas no vídeo{window}."
+    sides = [side for side in (first.before, last.after) if side is not None]
+    if len(sides) == 2:
+        low, high = sorted(sides, key=lambda side: side.time_seconds)
+        return (
+            f"{numbers} possivelmente ausentes entre os tempos "
+            f"{low.time_formatted} e {high.time_formatted}."
+        )
+    edge = sides[0]
+    return f"{numbers} possivelmente ausentes próximo ao tempo {edge.time_formatted}."
 
-    last_leading = missing[leading - 1]
-    window = (
-        f" (primeira linha extraída vista no tempo {last_leading.after.time_formatted})"
-        if last_leading.after is not None
-        else ""
-    )
-    entries = [
-        f"Linhas {missing[0].line_number} a {last_leading.line_number} nunca "
-        f"exibidas no vídeo{window}."
-    ]
-    entries += [_missing_line_entry(item) for item in missing[leading:]]
+
+def _missing_line_entries(missing: list[MissingLine]) -> list[str]:
+    """Render missing lines, collapsing any long contiguous run into one range.
+
+    Numbering gaps yield one absent number each; a wide gap (a scroll jump or a
+    single misread gutter number) would otherwise emit hundreds of lines and
+    drown the real gaps. Contiguous runs of at least ``MISSING_RUN_COLLAPSE_MIN``
+    absent numbers — leading or interior — become one range entry; shorter runs
+    stay itemized. The report's total count is untouched.
+    """
+    entries: list[str] = []
+    run: list[MissingLine] = []
+
+    def flush() -> None:
+        if not run:
+            return
+        if len(run) >= MISSING_RUN_COLLAPSE_MIN:
+            entries.append(_collapsed_run_entry(run))
+        else:
+            entries.extend(_missing_line_entry(item) for item in run)
+        run.clear()
+
+    for item in missing:
+        if run and item.line_number != run[-1].line_number + 1:
+            flush()
+        run.append(item)
+    flush()
     return entries
 
 
@@ -2188,12 +2250,16 @@ def write_outputs(
     consolidated — each uncertain line preceded by its `[OCR_UNCERTAIN]`
     marker. Frame images are produced by `run_ocr()` inside the run-scoped
     directory prepared by `prepare_output_tree()`.
+
+    The pandas-backed CSV is written last so that a missing-pandas failure
+    still leaves the human-readable code and report on disk (and, on bail
+    paths, does not mask the actionable error).
     """
     write_metadata(metadata, output)
     write_extraction_parameters(parameters, output)
-    write_ocr_raw(rows, output)
     write_extracted_code(merged, output)
     write_failure_report(report, output)
+    write_ocr_raw(rows, output)
 
 
 def _bail_with_report(
@@ -2307,7 +2373,7 @@ def main(
     metadata = metadata.model_copy(
         update={
             "sampling_strategy": (
-                f"adaptive_fps={_nearest_fps_tier(metadata.fps)},step={step},"
+                f"adaptive_fps={round(metadata.fps)},step={step},"
                 f"segment={parameters.effective_start_time}-{segment_end}"
             )
         }

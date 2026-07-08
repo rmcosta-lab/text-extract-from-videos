@@ -202,6 +202,28 @@ Goal: apply the deep review's consistency findings without behavior changes.
   `sampling_strategy` set without post-construction mutation, crop-preview
   wording).~~
 
+## ~~Phase 15 — Correctness fixes (deep-review perspective A)~~ ✅
+Goal: close the correctness findings from the deep review's bug-hunting
+perspective (the one cut off by the session limit and re-run afterward). No
+change to the fidelity contract — these make the pipeline behave correctly on
+inputs the earlier phases did not exercise.
+- ~~Near-duplicate frames inherit the accepted neighbor's *text* status: a
+  duplicate of a frame whose OCR came back empty is still unextractable, not
+  "covered" (fixes an under-reported span in `run_ocr()`).~~
+- ~~Low-FPS videos (< 24 fps) sample at `round(fps/2)` instead of snapping to
+  the 30/60/120 tiers, so fast scrolling between samples is not silently
+  skipped; the strategy label reports the real detected FPS.~~
+- ~~Missing-line report collapses *any* long contiguous run into one range
+  entry, not just the leading run, so a single mid-file gutter misread cannot
+  flood `relatorio_falhas.md`.~~
+- ~~`suggest_crop.py` rejects a valid-but-sub-frame time window (no frame
+  timestamp inside it) instead of silently analyzing a frame outside it.~~
+- ~~Smaller robustness fixes: clearer OpenCV-fallback message when the frame
+  count is undetectable; write the human-readable artifacts before the
+  pandas-dependent CSV on bail paths; validate `crop_preview.html` exists and
+  the port is free before the slow sampling pass; warn if a frame seek lands
+  off the requested position.~~
+
 ## Future (not scheduled)
 - Local vision-language model.
 - Optional LLM review pass that flags — but never fabricates — code.
