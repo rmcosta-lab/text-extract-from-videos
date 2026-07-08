@@ -233,6 +233,18 @@ def test_read_sampled_frames_rejects_an_inverted_window() -> None:
         read_sampled_frames(SAMPLE_VIDEO, 3, start_time="5", end_time="2")
 
 
+def test_read_sampled_frames_rejects_a_subframe_window() -> None:
+    if not SAMPLE_VIDEO.is_file():
+        pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
+    fps = get_video_metadata(SAMPLE_VIDEO).fps
+    # A valid window that falls strictly between two frame timestamps: it must
+    # be rejected, not silently widened to a frame outside the window.
+    start = f"{(10 + 0.3) / fps:.6f}"
+    end = f"{(10 + 0.7) / fps:.6f}"
+    with pytest.raises(InvalidExtractionParameterError):
+        read_sampled_frames(SAMPLE_VIDEO, 3, start_time=start, end_time=end)
+
+
 # --- Combination unit tests ---------------------------------------------------
 
 

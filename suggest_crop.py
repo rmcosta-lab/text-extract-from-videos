@@ -20,6 +20,7 @@ from `extract_code_from_video.py`, not re-implemented.
 
 import base64
 import re
+import socket
 import threading
 import webbrowser
 from pathlib import Path
@@ -267,6 +268,13 @@ def read_sampled_frames(
         end_time=end_time,
         step=1,
     )
+    if window.expected_candidate_frames == 0:
+        # A valid but sub-frame window (no frame timestamp inside it): don't
+        # silently fall back to a frame outside the requested range.
+        raise InvalidExtractionParameterError(
+            "the selected time window contains no frame to sample. Choose a "
+            "wider --start-time/--end-time interval."
+        )
     indices = sample_frame_indices(
         metadata.total_frames,
         count,
@@ -627,12 +635,22 @@ def create_app(
 ) -> FastAPI:
     """Build the preview app: sample frames and suggest the default crop eagerly.
 
-    Failures (unreadable video, invalid time window, missing OCR backend)
-    surface here, before the server starts. The first sampled frame is the
+    Failures (missing page template, unreadable video, invalid time window,
+    missing OCR backend) surface here, before the server starts. The page
+    template is read first so a missing/renamed file fails fast instead of
+    after the slow sampling + OCR pass. The first sampled frame is the
     before/after preview image; suggestions combine all sampled frames and
     are cached per engine, and re-crops reuse the cached frame without
     reopening the video.
     """
+    page_path = Path(__file__).parent / "crop_preview.html"
+    try:
+        page = page_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ReferenceFrameError(
+            f"cannot read the preview page template {page_path}: {exc}"
+        ) from exc
+
     samples = read_sampled_frames(video, sample_count, start_time, end_time)
     frame = samples.frames[0]
     suggestions: dict[EngineName, CropSuggestion] = {
@@ -649,7 +667,6 @@ def create_app(
         for sample in samples.frames
     ]
     frames_by_index = {sample.frame_index: sample for sample in samples.frames}
-    page = (Path(__file__).parent / "crop_preview.html").read_text(encoding="utf-8")
 
     app = FastAPI(title="Crop suggestion preview")
 
@@ -766,6 +783,18 @@ def main(
         fail(str(exc))
 
     url = f"http://{host}:{port}/"
+    # Probe the port before scheduling the browser tab: uvicorn exits via
+    # SystemExit on a bind failure (bypassing the OSError handler below) and
+    # the tab would open against a server that never started.
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind((host, port))
+    except OSError as exc:
+        fail(f"could not bind the server to {url} ({exc}); try another --port.")
+    finally:
+        probe.close()
+
     if open_browser:
         threading.Timer(0.8, webbrowser.open, [url]).start()
     try:
