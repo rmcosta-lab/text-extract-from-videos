@@ -14,6 +14,7 @@ from video_ocr.models import (
     FailureReport,
     InvalidExtractionParameterError,
     OCREngineUnavailableError,
+    OutputExtension,
     PreprocessConfig,
     PreprocessProfile,
     SelectionStats,
@@ -112,6 +113,14 @@ def main(
     ocr_max_side: Annotated[
         int, typer.Option(min=32, help="Longest side limit for bounded preprocessing.")
     ] = 4000,
+    output_extension: Annotated[
+        OutputExtension,
+        typer.Option("--output-extension", help="Export extension: txt, md or py."),
+    ] = OutputExtension.txt,
+    prepare_review: Annotated[
+        bool,
+        typer.Option(help="Save original frames and evidence for later LLM review."),
+    ] = False,
 ) -> None:
     """Extract the source code shown in a screen-recording video."""
     if not video.exists():
@@ -148,6 +157,8 @@ def main(
         fail(str(exc))
     segment_end = parameters.effective_end_time or "video_end_unknown"
     parameters.preprocessing = preprocessing
+    parameters.output_extension = output_extension
+    parameters.prepare_review = prepare_review
     metadata = metadata.model_copy(
         update={
             "sampling_strategy": (
@@ -206,6 +217,7 @@ def main(
         parameters.expected_candidate_frames,
         crop,
         preprocessing,
+        prepare_review,
     )
     console.print(
         f"[green]Selection:[/green] {stats.frames_sampled} frames sampled, "
@@ -290,6 +302,10 @@ def main(
         f"spans -> [cyan]{output / 'relatorio_falhas.md'}[/cyan]"
     )
     non_empty = sum(1 for row in rows if row.text)
+    if output_extension != OutputExtension.txt:
+        console.print(f"Export: {output / f'codigo_extraido.{output_extension.value}'}")
+    if prepare_review:
+        console.print(f"Review evidence: {output / 'review_manifest.json'}")
     console.print(
         f"[green]Done:[/green] {len(rows)} frames OCR'd ({non_empty} with "
         f"text). Outputs in [cyan]{output}[/cyan]: codigo_extraido.txt, "

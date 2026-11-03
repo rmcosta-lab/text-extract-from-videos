@@ -25,6 +25,10 @@ paddle-gpu = [
     "paddleocr>=3.3,<4",
     "paddlepaddle-gpu==3.2.2; sys_platform == 'win32' or sys_platform == 'linux'",
 ]
+review = [
+    "openai>=2,<3",
+    "truststore>=0.10,<1",
+]
 
 [tool.uv]
 package = false
@@ -64,7 +68,7 @@ allowed-confusables = ["×"] # dimension strings such as "3840×2160"
 
 [tool.mypy]
 python_version = "3.13"
-files = ["video_ocr", "extract_code_from_video.py", "suggest_crop.py", "evaluate_ocr.py", "test_*.py"]
+files = ["video_ocr", "extract_code_from_video.py", "suggest_crop.py", "evaluate_ocr.py", "review_ocr.py", "test_*.py"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true

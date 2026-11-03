@@ -83,6 +83,82 @@ uv export --locked --no-dev --format requirements-txt --output-file requirements
 
 ## Exemplo de comando de execução
 
+### Extensão da saída e preparação para revisão visual
+
+Use `--output-extension txt`, `md` ou `py` (sem ponto). O padrão é `txt`.
+A extensão selecionada gera `codigo_extraido.md` ou `codigo_extraido.py`,
+mantendo também `codigo_extraido.txt` como registro do OCR. O conteúdo é
+idêntico, inclusive os marcadores de incerteza: a extensão não formata nem
+corrige o texto, e um `.py` não é necessariamente Python válido.
+
+```powershell
+uv run --group paddle-gpu python extract_code_from_video.py --video example/IMG_1128.MOV --engine paddle --output saida/trecho-md --start-time 3.5 --end-time 9 --crop-left 62 --crop-top 471 --crop-right 162 --crop-bottom 0 --output-extension md --prepare-review
+```
+
+`--prepare-review` salva os frames originais dos frames aceitos, além das imagens
+processadas pelo OCR e dos WebPs coloridos já recortados para revisão
+(`frames_usados/frame_1320_review.jpg`, por exemplo). Também cria
+`review_manifest.json` com texto bruto, confiança,
+tempos e correspondência entre linhas da saída e frames. Isso usa mais espaço
+em disco. Essa opção apenas prepara evidências locais: não chama LLM nem envia
+imagens a uma API.
+
+### Revisão com a API da OpenAI
+
+Configure localmente `.env.local` (ignorado pelo Git). Use `.env.example` como
+referência; nunca coloque a chave real em arquivos versionados:
+
+```dotenv
+OPENAI_API_KEY=sua_chave_aqui
+OPENAI_REVIEW_MODEL=gpt-6-sol
+OPENAI_REVIEW_REASONING=high
+```
+
+O comando lê o modelo e o nível de raciocínio desse ambiente. `--model` e
+`--reasoning-effort` prevalecem sobre as variáveis quando informados.
+
+```powershell
+uv sync --locked --group paddle-gpu --group review --system-certs
+# Valida os arquivos e mostra o modelo configurado, sem chamar a API:
+uv run --group review --env-file .env.local python review_ocr.py --extraction saida/trecho-md --output saida/trecho-md/revisao-sol --dry-run
+# Envia o texto e os frames recortados para revisão (API paga):
+uv run --group review --env-file .env.local python review_ocr.py --extraction saida/trecho-md --output saida/trecho-md/revisao-sol --image-detail original --system-certs
+```
+
+`--system-certs` usa os certificados confiáveis do sistema e mantém TLS validado.
+`--image-detail original` deve ser usado com um modelo que suporte essa opção;
+o padrão é `high`. A extração prepara o JPEG de alta qualidade (qualidade 95,
+sem subsampling), sem reduzir a resolução do recorte. A revisão lê o campo
+`review_image` e envia esses bytes sem novo crop ou conversão. Os PNGs originais
+permanecem locais. Manifestos antigos ainda funcionam: quando não há JPEG
+preparado, a revisão o gera em memória a partir do original. Se o crop registrado
+em `parameters.crop` diferir de `review_crop`, ela também usa o original para
+não enviar um recorte desatualizado. A chamada usa Responses API, saída
+estruturada e `store=False`.
+
+A revisão gera `codigo_revisado.md` (ou a extensão escolhida), `comparativo.diff`
+e `revisao.json`, com justificativas, frames citados, uso de tokens e dúvidas.
+O OCR original não é alterado. Edições com posição/texto incompatível, sobrepostas
+ou citando frames não enviados são rejeitadas. Correções visuais exigem referência
+a um frame; mudanças classificadas como formatação só podem alterar whitespace.
+Essas validações não provam que a interpretação do modelo está correta: confira
+as sugestões e o diff. Um `.py` revisado também não é executado pelo programa.
+
+Uma revisão existente não é sobrescrita: use outra pasta em `--output`.
+O limite padrão é 12 frames, 100 mil caracteres e 25 MB de imagens codificadas
+antes de base64. O comando falha sem omitir evidências se exceder os limites.
+Use trechos menores ou ajuste `--max-frames` quando apropriado. O limite de saída
+é controlado por `--max-output-tokens` (padrão 12000, incluindo reasoning);
+respostas incompletas não são aplicadas e não há repetição automática de chamadas.
+
+Referências oficiais: [visão](https://developers.openai.com/api/docs/guides/images-vision),
+[saída estruturada](https://developers.openai.com/api/docs/guides/structured-outputs)
+e [GPT-6 Sol](https://developers.openai.com/api/docs/models/gpt-6-sol).
+
+Ao reutilizar a pasta de saída, os artefatos da execução anterior são limpos,
+incluindo a extensão registrada nos parâmetros. Use outra pasta para guardar
+comparações ou edições manuais.
+
 Nos exemplos abaixo, acrescente `--group paddle-gpu` depois de `uv run` e
 `--engine paddle` às opções para usar a GPU em vez do Tesseract.
 
@@ -262,3 +338,13 @@ localmente; sua execução no GitHub depende de commit/push e do runner configur
 
 Fontes de configuração: [uv no GitHub Actions](https://docs.astral.sh/uv/guides/integration/github/)
 e [seleção de runners](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job).
+
+### Resposta de revis?o incompleta
+
+O limite padr?o de sa?da ? 12.000 tokens. Para revis?es maiores, use
+`--max-output-tokens 32000` ou defina `OPENAI_REVIEW_MAX_OUTPUT_TOKENS=32000`
+no `.env.local`. A op??o da linha de comando tem prioridade sobre o ambiente.
+O or?amento inclui racioc?nio e o JSON de corre??es; aumentar esse limite pode
+permitir maior consumo de tokens. N?o ? necess?rio executar o OCR novamente.
+Respostas incompletas ou inv?lidas n?o s?o aplicadas e n?o geram nova tentativa
+autom?tica. Se o limite continuar insuficiente, revise um trecho menor.

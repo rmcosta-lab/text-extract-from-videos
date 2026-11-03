@@ -1,5 +1,9 @@
 """Imaging for local video OCR."""
 
+import io
+
+from PIL import Image
+
 from video_ocr.models import (
     BLUR_THRESHOLD,
     DENOISE_KERNEL_SIZE,
@@ -11,6 +15,17 @@ from video_ocr.models import (
     PreprocessProfile,
     require_cv2,
 )
+
+
+def encode_review_webp(image: Image.Image, crop: CropBox) -> bytes:
+    """Crop original colors once; retain resolution and encode WebP quality 90."""
+    crop.validate_against(*image.size)
+    cropped = image.crop(
+        (crop.left, crop.top, image.width - crop.right, image.height - crop.bottom)
+    )
+    buffer = io.BytesIO()
+    cropped.convert("RGB").save(buffer, format="WEBP", quality=90, method=4)
+    return buffer.getvalue()
 
 
 def apply_crop(image: MatLike, crop: CropBox) -> MatLike:

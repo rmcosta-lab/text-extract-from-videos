@@ -3,11 +3,13 @@
 from collections.abc import Iterable
 from pathlib import Path
 
+from PIL import Image
 from rich.progress import track
 
 from video_ocr.imaging import (
     _cropped_grayscale,
     _ssim_thumbnail,
+    encode_review_webp,
     frame_sharpness,
     is_frame_blurry,
     preprocess_frame,
@@ -36,6 +38,7 @@ def run_ocr(
     expected_samples: int,
     crop: CropBox,
     preprocessing: PreprocessConfig | None = None,
+    prepare_review: bool = False,
 ) -> tuple[list[OCRRow], SelectionStats, list[FrameOutcome]]:
     """OCR the sampled frames that survive selection.
 
@@ -99,6 +102,16 @@ def run_ocr(
         frame_path = frames_dir / f"frame_{frame_number}.png"
         if not cv2.imwrite(str(frame_path), processed):
             fail(f"could not save frame image: [cyan]{frame_path}[/cyan]")
+        if prepare_review:
+            original_path = frames_dir / f"frame_{frame_number}_original.png"
+            if not cv2.imwrite(str(original_path), image):
+                fail(f"could not save original frame: [cyan]{original_path}[/cyan]")
+            review_path = frames_dir / f"frame_{frame_number}_review.webp"
+            try:
+                rgb = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+                review_path.write_bytes(encode_review_webp(rgb, crop))
+            except OSError as exc:
+                fail(f"could not save review frame: [cyan]{review_path}[/cyan]: {exc}")
         result = engine.recognize(processed)
         last_accepted_usable = bool(result.text.strip())
         record_outcome(frame_number, time_seconds, usable=last_accepted_usable)

@@ -332,6 +332,12 @@ class EngineName(StrEnum):
     paddle = "paddle"
 
 
+class OutputExtension(StrEnum):
+    txt = "txt"
+    md = "md"
+    py = "py"
+
+
 class PreprocessProfile(StrEnum):
     legacy = "legacy"
     native = "native"
@@ -350,6 +356,8 @@ class ExtractionParameters(BaseModel):
     """User-requested and effective extraction controls for one run."""
 
     engine: EngineName = EngineName.tesseract
+    output_extension: OutputExtension = OutputExtension.txt
+    prepare_review: bool = False
     preprocessing: PreprocessConfig = Field(default_factory=PreprocessConfig)
     requested_start_time: str | None = None
     requested_end_time: str | None = None
@@ -487,6 +495,7 @@ RUN_ARTIFACT_FILENAMES = (
     "ocr_raw.csv",
     "metadata_video.json",
     "extraction_parameters.json",
+    "review_manifest.json",
 )
 """Run-scoped output files cleared up front so failed runs cannot leave a
 previous run's artifacts mixed with this run's fresh outputs."""

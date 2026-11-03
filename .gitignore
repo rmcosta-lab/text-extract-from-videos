@@ -9,4 +9,6 @@ sample-video/
 .uv-cache/
 .tools/
 example/*.MOV
+.env*
+!.env.example
 benchmarks/

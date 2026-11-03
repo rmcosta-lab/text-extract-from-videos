@@ -1,10 +1,14 @@
 """Image geometry and color fidelity across explicit preprocessing profiles."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
+from PIL import Image
 
 from video_ocr.imaging import apply_crop, preprocess_frame
-from video_ocr.models import CropBox, PreprocessConfig, PreprocessProfile
+from video_ocr.models import CropBox, OCRResult, PreprocessConfig, PreprocessProfile
+from video_ocr.pipeline import run_ocr
 
 
 def test_native_preserves_color_and_crop_pixels() -> None:
@@ -35,3 +39,25 @@ def test_legacy_remains_binary_double_resolution() -> None:
     assert result.shape == (160, 160)
     assert set(np.unique(result)) <= {0, 255}
     assert apply_crop(image, crop).shape == (80, 80, 3)
+
+
+def test_extraction_prepares_color_webp_with_crop(tmp_path: Path) -> None:
+    class Engine:
+        def recognize(self, image: object) -> OCRResult:
+            return OCRResult(text="test", lines=[])
+
+    image = np.random.default_rng(7).integers(0, 256, (100, 160, 3), dtype=np.uint8)
+    image[30:70, 50:100] = [0, 0, 255]  # BGR red; catch RGB/BGR reversal.
+    crop = CropBox(left=10, top=20, right=30, bottom=10)
+    rows, _, _ = run_ocr(
+        [(1320, 22.0, image)], Engine(), tmp_path, 1, crop, prepare_review=True
+    )
+    assert len(rows) == 1
+    with Image.open(tmp_path / "frame_1320_review.webp") as prepared:
+        assert prepared.size == (120, 70)
+        pixel = prepared.getpixel((60, 30))
+        assert isinstance(pixel, tuple)
+        red, green, blue = pixel
+        assert red > 240 and green < 15 and blue < 15
+    with Image.open(tmp_path / "frame_1320_original.png") as original:
+        assert original.size == (160, 100)
