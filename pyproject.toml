@@ -68,7 +68,7 @@ allowed-confusables = ["×"] # dimension strings such as "3840×2160"
 
 [tool.mypy]
 python_version = "3.13"
-files = ["video_ocr", "extract_code_from_video.py", "suggest_crop.py", "evaluate_ocr.py", "review_ocr.py", "test_*.py"]
+files = ["video_ocr", "explorer_segments", "extract_code_from_video.py", "suggest_crop.py", "evaluate_ocr.py", "evaluate_review.py", "review_ocr.py", "split_explorer_video.py", "test_*.py"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true

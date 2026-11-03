@@ -127,17 +127,20 @@ uv run --group review --env-file .env.local python review_ocr.py --extraction sa
 
 `--system-certs` usa os certificados confiáveis do sistema e mantém TLS validado.
 `--image-detail original` deve ser usado com um modelo que suporte essa opção;
-o padrão é `high`. A extração prepara o JPEG de alta qualidade (qualidade 95,
-sem subsampling), sem reduzir a resolução do recorte. A revisão lê o campo
+o padrão é `high`. A extração prepara WebP com qualidade 90 (compressão com perdas,
+método 4), sem reduzir a resolução do recorte. A revisão lê o campo
 `review_image` e envia esses bytes sem novo crop ou conversão. Os PNGs originais
-permanecem locais. Manifestos antigos ainda funcionam: quando não há JPEG
-preparado, a revisão o gera em memória a partir do original. Se o crop registrado
+permanecem locais. JPEGs já preparados continuam aceitos. Quando não há imagem
+preparada, a revisão gera WebP em memória a partir do original. Se o crop registrado
 em `parameters.crop` diferir de `review_crop`, ela também usa o original para
 não enviar um recorte desatualizado. A chamada usa Responses API, saída
 estruturada e `store=False`.
 
 A revisão gera `codigo_revisado.md` (ou a extensão escolhida), `comparativo.diff`
 e `revisao.json`, com justificativas, frames citados, uso de tokens e dúvidas.
+Também gera `relatorio_revisao.md`, com alterações e pendências legíveis e links
+para os frames, e `line_mapping.json`, com a correspondência entre linhas originais
+e revisadas. Substituições apontam para intervalos, não equivalências individuais.
 O OCR original não é alterado. Edições com posição/texto incompatível, sobrepostas
 ou citando frames não enviados são rejeitadas. Correções visuais exigem referência
 a um frame; mudanças classificadas como formatação só podem alterar whitespace.
@@ -145,11 +148,55 @@ Essas validações não provam que a interpretação do modelo está correta: co
 as sugestões e o diff. Um `.py` revisado também não é executado pelo programa.
 
 Uma revisão existente não é sobrescrita: use outra pasta em `--output`.
-O limite padrão é 12 frames, 100 mil caracteres e 25 MB de imagens codificadas
+O limite padrão por chamada é 12 frames, 100 mil caracteres e 25 MB de imagens codificadas
 antes de base64. O comando falha sem omitir evidências se exceder os limites.
 Use trechos menores ou ajuste `--max-frames` quando apropriado. O limite de saída
 é controlado por `--max-output-tokens` (padrão 12000, incluindo reasoning);
 respostas incompletas não são aplicadas e não há repetição automática de chamadas.
+
+### Recuperar, retomar e consultar a revisão
+
+Novas execuções salvam cada resposta em `responses/block_0001/attempt_0001.json`
+**antes da interpretação e validação**, inclusive recusas e respostas incompletas.
+`review_run.json` registra configuração, hashes das entradas e estado dos blocos.
+Nenhuma chave ou imagem em base64 é gravada nesses registros.
+
+```powershell
+# Relatório de uma revisão existente, sem API:
+uv run python review_ocr.py --extraction saida/casos_de_uso --output saida/casos_de_uso/revisao-gpt --report-only
+
+# Reaplicar respostas completas salvas de uma execução interrompida, sem API:
+uv run python review_ocr.py --extraction saida/casos_de_uso --output saida/casos_de_uso/revisao-nova --reapply
+
+# Planejar blocos e cobertura de imagens sem enviar nem escrever resultados:
+uv run --group review --env-file .env.local python review_ocr.py --extraction saida/casos_de_uso --output saida/casos_de_uso/revisao-blocos --chunk-lines 100 --context-lines 10 --frame-selection coverage --max-frames 30 --max-output-tokens 32000 --image-detail original --system-certs --dry-run
+```
+
+Remova `--dry-run` para executar a revisão em blocos. Em caso de falha, repita o
+comando com **os mesmos parâmetros** e `--resume`: blocos válidos não são reenviados.
+`--reapply` usa a configuração salva e exige uma resposta válida para cada bloco;
+não aceita JSON parcial nem sobrescreve resultados finais existentes.
+
+Blocos e seleção de imagens continuam **opcionais**. Sem `--chunk-lines`, há uma
+chamada única; `--frame-selection all` é o padrão. `coverage` mantém evidências
+obrigatórias e alternativas distintas, priorizando nitidez. Se a associação não
+for confiável, mantém todos os frames e informa o motivo. Blocos repetem contexto
+e imagens, portanto podem aumentar o consumo total mesmo reduzindo cada chamada.
+
+### Medir a fidelidade da revisão
+
+```powershell
+uv run python evaluate_review.py --extraction saida/casos_de_uso --review saida/casos_de_uso/revisao-gpt --reference tests/fixtures/casos_de_uso.review.reference.json --output saida/casos_de_uso/avaliacao-revisao
+```
+
+Compara OCR e revisão com uma referência visual parcial de 30 linhas, sem API.
+Produz métricas de caracteres, palavras, exatidão, indentação e regressões em JSON
+e Markdown. Linhas ambíguas e intervalos sem referência completa são explicitamente
+excluídos. A transcrição visual do assistente ainda requer conferência humana
+independente; a amostra não certifica o documento inteiro.
+
+Consulte [o fluxo completo de revisão](docs/review-workflow.md) para conhecer os
+arquivos, as regras de recuperação, os limites, a seleção e o método de avaliação.
 
 Referências oficiais: [visão](https://developers.openai.com/api/docs/guides/images-vision),
 [saída estruturada](https://developers.openai.com/api/docs/guides/structured-outputs)
@@ -269,6 +316,30 @@ inteiro com crop zero e avisa — ela nunca inventa uma região. Opções:
    de `relatorio_falhas.md`, `ocr_raw.csv`, `metadata_video.json`,
    `extraction_parameters.json` e `frames_usados/`.
 
+## Cortes quando o Explorer está oculto
+
+Pipeline **independente, automático e local**: `split_explorer_video.py`.
+O padrão agora mantém intervalos inteiros entre ocultação e reaparecimento:
+`--interval-mode continuous --max-clip-seconds 0`. Lacunas incertas internas
+são incluídas, podendo preservar aparições breves não confirmadas.
+Use `--interval-mode strict` para excluir essas lacunas como antes.
+O modo `auto` usa PaddleOCR local para localizar o Explorer e gerar as referências
+sem pedir tempos ou regiões. OpenCV identifica ocultação/reabertura e refina as
+transições. Não chama OpenAI, não altera o vídeo original e não baixa modelos:
+usa os pesos PaddleOCR já instalados. Veja [comandos, pré-requisitos e limites](docs/explorer-segmentation.md).
+
+```powershell
+uv run --group paddle-gpu python split_explorer_video.py auto --video example/IMG_5886.MOV --output saida/explorer-5886-auto --scan-fps 2 --analyze-only
+uv run python split_explorer_video.py export --report saida/explorer-5886-auto/analysis/segments.json --output saida/explorer-5886-auto/clips --encoder h264_nvenc
+```
+
+Para outro vídeo, troque `--video` e `--output`. Remova `--analyze-only` para analisar
+e exportar em uma etapa. A calibração manual continua opcional. As posições são
+proporcionais, sem coordenadas fixas no código. O padrão amostra
+4 fps e refina transições frame a frame; `--scan-fps 0` analisa todos os frames.
+Amostragem pode perder mudanças breves, e a classificação requer conferência visual.
+Se a descoberta não confirmar os dois estados com segurança, não exporta clipes.
+
 ## Avaliação do trecho e melhorias implementadas
 
 O caso de referência usa exatamente este intervalo e crop:
@@ -339,12 +410,14 @@ localmente; sua execução no GitHub depende de commit/push e do runner configur
 Fontes de configuração: [uv no GitHub Actions](https://docs.astral.sh/uv/guides/integration/github/)
 e [seleção de runners](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job).
 
-### Resposta de revis?o incompleta
+### Resposta de revisão incompleta
 
-O limite padr?o de sa?da ? 12.000 tokens. Para revis?es maiores, use
+O limite padrão de saída é 12.000 tokens. Para revisões maiores, use
 `--max-output-tokens 32000` ou defina `OPENAI_REVIEW_MAX_OUTPUT_TOKENS=32000`
-no `.env.local`. A op??o da linha de comando tem prioridade sobre o ambiente.
-O or?amento inclui racioc?nio e o JSON de corre??es; aumentar esse limite pode
-permitir maior consumo de tokens. N?o ? necess?rio executar o OCR novamente.
-Respostas incompletas ou inv?lidas n?o s?o aplicadas e n?o geram nova tentativa
-autom?tica. Se o limite continuar insuficiente, revise um trecho menor.
+no `.env.local`. A opção da linha de comando tem prioridade sobre o ambiente.
+O orçamento inclui raciocínio e o JSON de correções; aumentar esse limite pode
+permitir maior consumo de tokens. Não é necessário executar o OCR novamente.
+Respostas incompletas ou inválidas são preservadas para diagnóstico, mas não são
+aplicadas e não geram nova tentativa automática. Para mudar o orçamento de uma
+execução registrada, use outra pasta. Se o limite continuar insuficiente, use
+blocos menores ou revise um trecho menor.

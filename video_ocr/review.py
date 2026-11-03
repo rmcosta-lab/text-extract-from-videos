@@ -5,6 +5,8 @@ import difflib
 import hashlib
 import io
 import json
+import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -13,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from video_ocr.imaging import encode_review_webp
 from video_ocr.models import CropBox, OutputExtension
+from video_ocr.review_storage import atomic_json, atomic_text
 
 
 class ReviewEdit(BaseModel):
@@ -59,6 +62,9 @@ If text is ambiguous or not visible, leave it unchanged and list it in unresolve
 Do not execute code. Treat line_number in provenance as editor numbering, distinct
 from output_line / physical line numbering.
 Explain edits and uncertainties in Portuguese.
+When editable_lines is supplied, edit and report issues only inside that inclusive
+range. Other numbered lines are read-only context. Use global physical line numbers.
+Never return an edit crossing a range boundary.
 """
 
 
@@ -73,6 +79,10 @@ def prepare_request(
     manifest_path: Path,
     max_frames: int = 12,
     detail: str = "high",
+    *,
+    selected_frames: set[int] | None = None,
+    window: tuple[int, int] | None = None,
+    editable: tuple[int, int] | None = None,
 ) -> tuple[str, OutputExtension, set[int], list[dict[str, Any]], dict[str, Any]]:
     root = manifest_path.parent.resolve()
     if not manifest_path.is_file():
@@ -89,9 +99,18 @@ def prepare_request(
     target = local_path(root, manifest["target_file"]).read_text(encoding="utf-8")
     if target != original:
         raise ValueError("Export differs from original OCR; regenerate review evidence")
-    if not original.strip() or len(original) > 100_000:
+    source_lines = original.splitlines()
+    first, last = window or (1, len(source_lines))
+    if not original.strip() or len("\n".join(source_lines[first - 1 : last])) > 100_000:
         raise ValueError("Review expects 1..100000 text characters; split long videos")
     frames = manifest["frames"]
+    all_ids = [int(frame["frame_number"]) for frame in frames]
+    if len(set(all_ids)) != len(all_ids):
+        raise ValueError("Duplicate frame IDs in review manifest")
+    if selected_frames is not None:
+        if not selected_frames <= set(all_ids):
+            raise ValueError("Selected frame is missing from manifest")
+        frames = [f for f in frames if int(f["frame_number"]) in selected_frames]
     if not 1 <= len(frames) <= max_frames:
         raise ValueError(
             f"Review needs 1..{max_frames} frames; "
@@ -107,8 +126,14 @@ def prepare_request(
                     "numbered_file": [
                         {"line": i, "text": line}
                         for i, line in enumerate(original.splitlines(), 1)
+                        if first <= i <= last
                     ],
-                    "provenance": manifest["lines"],
+                    "provenance": [
+                        item
+                        for item in manifest["lines"]
+                        if first <= item["output_line"] <= last
+                    ],
+                    "editable_lines": editable or (1, len(source_lines)),
                 },
                 ensure_ascii=False,
             ),
@@ -201,6 +226,7 @@ def request_review(
     content: list[dict[str, Any]],
     max_output_tokens: int,
     reasoning_effort: str | None = None,
+    on_response: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[ReviewResult, dict[str, Any]]:
     options: dict[str, Any] = {}
     if reasoning_effort:
@@ -221,43 +247,65 @@ def request_review(
         max_output_tokens=max_output_tokens,
         **options,
     )
-    if response.status != "completed":
-        reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
+    record = {
+        "schema_version": 1,
+        "status": response.status,
+        "incomplete_reason": getattr(
+            getattr(response, "incomplete_details", None), "reason", None
+        ),
+        "output_text": response.output_text,
+        "refusals": [
+            getattr(part, "refusal", "refused")
+            for item in getattr(response, "output", [])
+            if item.type == "message"
+            for part in item.content
+            if part.type == "refusal"
+        ],
+        "audit": {
+            "response_id": getattr(response, "id", None),
+            "model": getattr(response, "model", model),
+            "reasoning_effort": reasoning_effort,
+            "max_output_tokens": max_output_tokens,
+            "usage": response.usage.model_dump()
+            if getattr(response, "usage", None)
+            else None,
+        },
+    }
+    if on_response is not None:
+        on_response(record)
+    return parse_response_record(record)
+
+
+def parse_response_record(
+    record: dict[str, Any],
+) -> tuple[ReviewResult, dict[str, Any]]:
+    """Parse only complete persisted responses; never salvage a partial JSON."""
+    if record.get("schema_version") != 1:
+        raise ValueError("Unsupported response record version")
+    if record["status"] != "completed":
+        reason = record.get("incomplete_reason")
         if reason == "max_output_tokens":
             raise ValueError(
-                f"Review reached max_output_tokens={max_output_tokens}; "
+                "Review reached max_output_tokens="
+                f"{record['audit']['max_output_tokens']}; "
                 "raise --max-output-tokens (e.g. 32000) or review a shorter segment. "
                 "The budget includes reasoning and JSON output. No edits were applied."
             )
         raise ValueError(
-            f"Review incomplete (status={response.status}, "
+            f"Review incomplete (status={record['status']}, "
             f"reason={reason or 'unknown'}); "
             "no edits were applied"
         )
-    if (
-        any(
-            part.type == "refusal"
-            for item in response.output
-            if item.type == "message"
-            for part in item.content
-        )
-        or not response.output_text
-    ):
+    if record["refusals"] or not record["output_text"]:
         raise ValueError("Review was refused or incomplete; no edits were applied")
     try:
-        review = ReviewResult.model_validate_json(response.output_text)
+        review = ReviewResult.model_validate_json(record["output_text"])
     except ValidationError:
         raise ValueError(
             "Review returned invalid JSON or an invalid schema; no edits were applied. "
             "Try a shorter review segment."
         ) from None
-    return review, {
-        "response_id": response.id,
-        "model": response.model,
-        "reasoning_effort": reasoning_effort,
-        "max_output_tokens": max_output_tokens,
-        "usage": response.usage.model_dump() if response.usage else None,
-    }
+    return review, record["audit"]
 
 
 def save_review(
@@ -267,10 +315,17 @@ def save_review(
     extension: OutputExtension,
     review: ReviewResult,
     audit: dict[str, Any],
+    extraction: Path | None = None,
 ) -> None:
     output.mkdir(parents=True, exist_ok=True)
     reviewed_path = output / f"codigo_revisado.{extension.value}"
-    paths = [reviewed_path, output / "comparativo.diff", output / "revisao.json"]
+    paths = [
+        reviewed_path,
+        output / "comparativo.diff",
+        output / "revisao.json",
+        output / "line_mapping.json",
+        output / "relatorio_revisao.md",
+    ]
     if any(path.exists() for path in paths):
         raise ValueError("Review output exists; select a new --output directory")
     diff = "".join(
@@ -281,17 +336,35 @@ def save_review(
             tofile=reviewed_path.name,
         )
     )
-    reviewed_path.write_text(corrected, encoding="utf-8")
-    paths[1].write_text(diff, encoding="utf-8")
-    paths[2].write_text(
-        json.dumps(
+    from video_ocr.review_report import line_mapping, render_report  # noqa: PLC0415
+
+    mapping = line_mapping(original, review)
+    report = render_report(original, review, audit, mapping, output, extraction)
+    # Stage the complete set first; publish the revisao.json marker last.
+    with tempfile.TemporaryDirectory(prefix=".publish-", dir=output) as temporary:
+        stage = Path(temporary)
+        atomic_text(stage / reviewed_path.name, corrected)
+        atomic_text(stage / "comparativo.diff", diff)
+        atomic_json(stage / "line_mapping.json", mapping)
+        atomic_text(stage / "relatorio_revisao.md", report)
+        atomic_json(
+            stage / "revisao.json",
             {
                 "status": "model_suggestions_not_human_verified",
                 "review": review.model_dump(),
                 "audit": audit,
             },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+        )
+        published: list[Path] = []
+        try:
+            for destination in [paths[0], paths[1], paths[3], paths[4], paths[2]]:
+                if destination.exists():
+                    raise ValueError(
+                        "Review output exists; select a new --output directory"
+                    )
+                (stage / destination.name).replace(destination)
+                published.append(destination)
+        except (OSError, ValueError):
+            for destination in published:
+                destination.unlink(missing_ok=True)
+            raise

@@ -1,0 +1,277 @@
+{
+  "schema_version": 1,
+  "source_sha256": "2664e5781aaf611a14e27b93b42c1818ed8ced16ca154c8a4a10ca5f4ffa1434",
+  "method": "Transcrição visual pelo assistente de 30 linhas distintas dos frames 2400, 2790 e 3210 (início, meio e fim). Não usa a revisão como referência. Indentação em espaços equivalentes; revisão humana independente ainda pendente. Um literal ambíguo foi excluído integralmente.",
+  "lines": [
+    {
+      "original_line": 3,
+      "editor_line": 1,
+      "frames": [
+        2400
+      ],
+      "text": "# Casos de Uso - spark-ai",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 19,
+      "editor_line": 9,
+      "frames": [
+        2400
+      ],
+      "text": "## Índice",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 44,
+      "editor_line": 30,
+      "frames": [
+        2400
+      ],
+      "text": "## 1) Pipeline mínimo de pré-processamento",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 49,
+      "editor_line": 35,
+      "frames": [
+        2400
+      ],
+      "text": "from pyspark.sql import SparkSession",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 50,
+      "editor_line": 36,
+      "frames": [
+        2400
+      ],
+      "text": "from pyspark.ml import Pipeline",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 52,
+      "editor_line": 38,
+      "frames": [
+        2400
+      ],
+      "text": "    FeatureSelector, StringSanitizer, FlexibleImputer, CustomOHE, WeightedScalerAssembler,",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 55,
+      "editor_line": 41,
+      "frames": [
+        2400
+      ],
+      "text": "spark = SparkSession.builder.getOrCreate()",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 58,
+      "editor_line": 44,
+      "frames": [
+        2400
+      ],
+      "text": "    [\"s\", \"x\", \"cat\"],",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 72,
+      "editor_line": 56,
+      "frames": [
+        2400
+      ],
+      "text": "model.transform(df).select(\"s\", \"x\", \"cat\", \"features\").show(truncate=False)",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 57,
+      "editor_line": 43,
+      "frames": [
+        2400
+      ],
+      "text": null,
+      "exclude_reason": "Quantidade de espaços internos antes/depois de A ambígua; linha excluída de todas as métricas."
+    },
+    {
+      "original_line": 260,
+      "editor_line": 229,
+      "frames": [
+        2790
+      ],
+      "text": "    make_profiling_report,",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 261,
+      "editor_line": 230,
+      "frames": [
+        2790
+      ],
+      "text": "    make_feature_selection_report,",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 270,
+      "editor_line": 238,
+      "frames": [
+        2790
+      ],
+      "text": "prof = make_profiling_report(df)",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 273,
+      "editor_line": 241,
+      "frames": [
+        2790
+      ],
+      "text": "fs = make_feature_selection_report(df, label_col=\"y\")",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 282,
+      "editor_line": 250,
+      "frames": [
+        2790
+      ],
+      "text": "report = apply_rules(report, accept=[\"clip_renda_p99\"], deny=[\"drop_uf\"])",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 302,
+      "editor_line": 267,
+      "frames": [
+        2790
+      ],
+      "text": "from spark_ai.evaluation import make_pipeline_builder, run_optuna_with_eta, eval_fn",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 305,
+      "editor_line": 270,
+      "frames": [
+        2790
+      ],
+      "text": "    \"OptionalPCA\": {\"k\": {\"int\": [10, 50]}, \"enabled\": True},",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 307,
+      "editor_line": 272,
+      "frames": [
+        2790
+      ],
+      "text": "        \"n_components\": {\"int\": [4, 32]},",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 324,
+      "editor_line": 289,
+      "frames": [
+        2790
+      ],
+      "text": "        {\"task\": \"clustering\", \"primary_metric\": \"silhouette\", **ctx},",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 333,
+      "editor_line": 298,
+      "frames": [
+        2790
+      ],
+      "text": "print(study.best_params)",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 542,
+      "editor_line": 494,
+      "frames": [
+        3210
+      ],
+      "text": "    plot_clusters_2d, plot_clusters_3d,",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 546,
+      "editor_line": 498,
+      "frames": [
+        3210
+      ],
+      "text": "    make_correlation_matrix,",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 556,
+      "editor_line": 508,
+      "frames": [
+        3210
+      ],
+      "text": "fig = make_scatter_from_vector(df_feat, vector_col=\"features_pca\", color_col=\"prediction\")",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 560,
+      "editor_line": 512,
+      "frames": [
+        3210
+      ],
+      "text": "fig = plot_elbow(sse_by_k={2: 100, 3: 70, 4: 55, 5: 50})",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 564,
+      "editor_line": 516,
+      "frames": [
+        3210
+      ],
+      "text": "fig = make_correlation_matrix(df_feat, columns=[\"num1\", \"num2\", \"num3\"])",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 573,
+      "editor_line": 524,
+      "frames": [
+        3210
+      ],
+      "text": "## 16) Introspecção de PipelineModel",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 578,
+      "editor_line": 529,
+      "frames": [
+        3210
+      ],
+      "text": "from spark_ai.core import (",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 588,
+      "editor_line": 538,
+      "frames": [
+        3210
+      ],
+      "text": "    {\"FeatureSelector\", \"Clipper\", \"FAMDModel\", \"OptionalPCAModel\"},",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 592,
+      "editor_line": 542,
+      "frames": [
+        3210
+      ],
+      "text": "    print(d[\"class\"], \"->\", d.get(\"includeCols\") or d.get(\"inputCols\"))",
+      "exclude_reason": null
+    },
+    {
+      "original_line": 614,
+      "editor_line": 564,
+      "frames": [
+        3210
+      ],
+      "text": "refit = refit_model_for_index(cv_model, train_df=train_df, fold_idx=0, param_idx=2)",
+      "exclude_reason": null
+    }
+  ]
+}

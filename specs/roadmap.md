@@ -224,6 +224,42 @@ inputs the earlier phases did not exercise.
   the port is free before the slow sampling pass; warn if a frame seek lands
   off the requested position.~~
 
+## Phase 16 — Recoverable, auditable, measurable visual review
+
+- Implemented: optional OpenAI visual review, output extension selection,
+  prepared cropped WebP quality 90, immutable original OCR and anchored edits.
+- Implemented: persist every received response before parsing/application;
+  execution fingerprints, offline `--reapply`, sequential `--resume` and retained
+  attempts. Incomplete output is never partially applied.
+- Implemented: human-readable review report, original/revised line mapping,
+  evidence links and `--report-only` for existing reviews.
+- Implemented: opt-in `--chunk-lines` with read-only context and strict ownership
+  of editable ranges; preflight all blocks before calls.
+- Implemented: opt-in `--frame-selection coverage`, preserving mandatory frames
+  and alternative readings, falling back to all frames when association is unsafe.
+- Implemented: offline review evaluator and 30-line visual reference from
+  `casos_de_uso`; ambiguous or incompletely referenced spans are excluded openly.
+- Validation: mocked API regressions, local report/evaluation and dry-run of the
+  existing extraction. No new paid comparison calls are part of initial delivery.
+- Pending: independent human verification of the visual reference, explicit
+  single-request vs chunked/coverage experiments with quality and token usage.
+  Keep both optimizations opt-in until those comparisons support a default change.
+
+Usage, recovery rules, artifacts and limitations:
+[review workflow](../docs/review-workflow.md).
+
+## Phase 17 — Independent local Explorer segmentation
+
+- Implemented in `split_explorer_video.py`:
+  automatic local PaddleOCR discovery and visual tracking, timestamped hide/show
+  transitions, conservative temporal clips, analysis-only/export modes and NVENC.
+  The auto command discovers reference moments and regions without manual input;
+  manual calibration remains optional. Unsupported/ambiguous recordings stop or
+  exclude uncertain spans in strict mode. Continuous mode (new default) keeps
+  entire intervals between confirmed hide/show events, including internal
+  uncertainty; duration subdivision is disabled by default. See
+  [Explorer segmentation](../docs/explorer-segmentation.md).
+
 ## Future (not scheduled)
 - Local vision-language model.
-- Optional LLM review pass that flags — but never fabricates — code.
+- Broader source-grounded references and evaluation of full-document fidelity.

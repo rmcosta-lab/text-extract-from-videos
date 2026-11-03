@@ -11,11 +11,13 @@ work.
 - **Python 3.13** in a local virtualenv (`.venv`) managed by **uv**.
 - Dependencies are declared in `pyproject.toml` and locked in `uv.lock`.
 - Tooling is in the `dev` group; NVIDIA OCR is in `paddle-gpu`.
-- Runs entirely offline; no network calls at runtime.
+- OCR runs locally with cached models. Optional visual review uses the paid
+  OpenAI Responses API through the `review` dependency group. Offline recovery,
+  report generation and review evaluation do not load the SDK or require a key.
 
 ## CLI & data modeling
 
-- **CLI framework: `typer`.** (Not argparse.) Single entrypoint
+- **CLI framework: `typer`.** (Not argparse.) Extraction entrypoint
   `extract_code_from_video.py` exposing `--video` and `--output`, plus the crop
   flags `--crop-left/-top/-right/-bottom`.
 - **Result models: `pydantic`.** (Not plain dataclasses.) All structured
@@ -82,7 +84,33 @@ requirement, not an aspiration.
   `extract_code_from_video.py` (metadata, frame reading, preprocessing, OCR
   engine construction) rather than duplicating them.
 
+## Independent Explorer video segmentation
+
+- `split_explorer_video.py` / `explorer_segments` are separate from OCR/review.
+  Basic dependencies are existing OpenCV, NumPy, Pydantic, Typer and local FFmpeg.
+  Automatic discovery uses PaddleOCR with explicit cached model paths; no imports
+  from the code OCR/review pipelines and no runtime model downloads.
+- Normalized template correlation at multiple scales, with separate stable Explorer
+  panel and application-anchor regions. Calibration and thresholds live in a
+  reusable external profile, not in code tied to a particular movie.
+- Coarse sampling with frame-level refinement around transitions; optional
+  exhaustive analysis. Ambiguous frames are excluded, with evidence and timestamps.
+- H.264 re-encoding preserves accurate temporal cuts; optional NVENC accelerates
+  export only. Local AI discovers the panel/tree and generates the visual profile;
+  no API or credentials are used. Manual calibration remains optional.
+- See [calibration and limitations](../docs/explorer-segmentation.md).
+
 ## Quality tooling
+
+- Review workflow: `review_ocr.py`; anchored visual review with strict Pydantic
+  schemas. Raw response records are persisted before parsing and application.
+- `review_plan`, `review_run`, `review_storage`, and `review_report` separate
+  evidence selection, resumable execution, atomic records and line mapping.
+- `evaluate_review.py` / `review_quality` evaluate saved reviews against an
+  anchored partial visual reference, independently of OCR runtime and API.
+- Review images use Pillow WebP quality 90/method 4; existing JPEG evidence is
+  accepted. Crops retain original resolution. See
+  [review workflow](../docs/review-workflow.md) for limits and compatibility.
 
 - **`ruff`** for linting and formatting.
 - **`mypy`** for static type-checking (backs the "type hints everywhere" rule).
