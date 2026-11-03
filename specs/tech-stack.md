@@ -91,6 +91,17 @@ requirement, not an aspiration.
 
 ## Conventions
 
+- Implementation is split into `video_ocr.models`, `video`, `imaging`, `ocr`,
+  `pipeline`, `reconstruction`, `reports`, `quality`, and `cli`. The original
+  extraction script remains a CLI and compatibility facade.
+- Explicit preprocessing profiles: `legacy` (default binary 2x), `native`
+  (cropped color), and `bounded` (color with configured scale/side limit).
+  Do not change defaults based on speed alone; compare partial-reference CER,
+  line numbers and indentation using `evaluate_ocr.py`.
+- Unit CI excludes `integration`/`gpu` markers. GPU integration is manually
+  dispatched on a self-hosted runner with the local video; quality thresholds
+  are regression checks for the reference sample, not source-code guarantees.
+
 - Modular functions with the exact seams named in the README:
   `get_video_metadata()`, `sample_frames()`, `preprocess_frame()`,
   `is_frame_blurry()`, `run_ocr()`, `parse_code_lines()`, `merge_ocr_results()`,

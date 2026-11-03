@@ -1,0 +1,39 @@
+name: Local GPU integration
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gpu:
+    runs-on: [self-hosted, Windows, X64, gpu]
+    timeout-minutes: 30
+    env:
+      TEST_OCR_ENGINE: paddle
+      REQUIRE_TEST_VIDEO: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: "0.12.1"
+      - name: Copy video from runner-local fixture directory
+        shell: pwsh
+        run: |
+          if (!$env:OCR_TEST_VIDEO -or !(Test-Path -LiteralPath $env:OCR_TEST_VIDEO)) {
+            throw 'Set OCR_TEST_VIDEO on the runner to the local IMG_1128.MOV path'
+          }
+          New-Item -ItemType Directory -Force example | Out-Null
+          Copy-Item -LiteralPath $env:OCR_TEST_VIDEO -Destination example/IMG_1128.MOV
+      - run: uv sync --locked --group paddle-gpu
+      - run: uv run --locked --group paddle-gpu pytest -m integration
+      - run: uv run --locked --group paddle-gpu python evaluate_ocr.py --require-gpu
+      - run: uv run --locked --group paddle-gpu python evaluate_ocr.py --require-gpu --profile legacy --max-cer 0.10 --min-number-accuracy 0.85 --output saida/quality-gate
+      - run: uv run --locked --group paddle-gpu python extract_code_from_video.py --video example/IMG_1128.MOV --engine paddle --output saida/trecho --start-time 3.5 --end-time 9 --crop-left 62 --crop-top 471 --crop-right 162 --crop-bottom 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ocr-metrics
+          path: |
+            saida/avaliacao/metrics.json
+            saida/quality-gate/metrics.json
+            saida/trecho/*.json
+            saida/trecho/*.md

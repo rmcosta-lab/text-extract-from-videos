@@ -1,0 +1,55 @@
+{
+  "video": "example/IMG_1128.MOV",
+  "start_time": "3.5",
+  "end_time": "9",
+  "crop": {"left": 62, "top": 471, "right": 162, "bottom": 0},
+  "method": "Partial manual visual transcription of readable lines, made from original frames before evaluating OCR variants. Blank, occluded and diagram lines are excluded. Indentation is visual space-equivalent; tabs versus spaces cannot be determined from video. These samples measure selected-line recall and errors, not whole-document accuracy or false positives.",
+  "samples": [
+    {
+      "frame_index": 210,
+      "lines": [
+        {"number": 9, "text": "## Mapa da documentação"},
+        {"number": 11, "text": "### Conceitual"},
+        {"number": 13, "text": "| Documento | O que cobre |"},
+        {"number": 14, "text": "|---|---|"},
+        {"number": 17, "text": "| [`getting-started.md`](./getting-started.md) | Quickstart mínimo (já existente) |"},
+        {"number": 18, "text": "| [`index.md`](./index.md) | Índice raiz Sphinx + MyST (já existente) |"},
+        {"number": 20, "text": "### Referência por módulo"},
+        {"number": 22, "text": "| Módulo | Documento | Símbolos principais |"},
+        {"number": 23, "text": "|---|---|---|"},
+        {"number": 34, "text": "## Por onde começar"},
+        {"number": 45, "text": "  - Estrutura do pacote"},
+        {"number": 46, "text": "  - Pipeline canônico"}
+      ]
+    },
+    {
+      "frame_index": 360,
+      "lines": [
+        {"number": 9, "text": "## Mapa da documentação"},
+        {"number": 11, "text": "### Conceitual"},
+        {"number": 13, "text": "| Documento | O que cobre |"},
+        {"number": 14, "text": "|---|---|"},
+        {"number": 15, "text": "| [`visao-geral.md`](./visao-geral.md) | O que é a biblioteca, filosofia, estrutura, compatibilidade, pipeline canônico |"},
+        {"number": 17, "text": "| [`getting-started.md`](./getting-started.md) | Quickstart mínimo (já existente) |"},
+        {"number": 18, "text": "| [`index.md`](./index.md) | Índice raiz Sphinx + MyST (já existente) |"},
+        {"number": 20, "text": "### Referência por módulo"},
+        {"number": 22, "text": "| Módulo | Documento | Símbolos principais |"},
+        {"number": 23, "text": "|---|---|---|"}
+      ]
+    },
+    {
+      "frame_index": 510,
+      "lines": [
+        {"number": 34, "text": "## Por onde começar"},
+        {"number": 54, "text": "### 4. **Vou usar `X`** → vá ao módulo"},
+        {"number": 61, "text": "- MLflow I/O + dados sintéticos → [`modulos/data.md`](./modulos/data.md)"},
+        {"number": 62, "text": "- Introspecção de `PipelineModel` → [`modulos/core.md`](./modulos/core.md)"},
+        {"number": 64, "text": "---"},
+        {"number": 66, "text": "## Fluxo de uso recomendado"},
+        {"number": 68, "text": "```text"},
+        {"number": 69, "text": "1. make_synth_tabular"},
+        {"number": 78, "text": "3. make_pipeline_from_report ──> Pipeline Spark", "exclude": true, "reason": "Arrow glyph cannot be transcribed unambiguously from the image."}
+      ]
+    }
+  ]
+}

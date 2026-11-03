@@ -19,6 +19,7 @@ from `extract_code_from_video.py`, not re-implemented.
 """
 
 import base64
+import math
 import re
 import socket
 import threading
@@ -34,7 +35,11 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from rich.progress import track
 
-from extract_code_from_video import (
+from video_ocr.imaging import (
+    apply_crop,
+    preprocess_frame,
+)
+from video_ocr.models import (
     LINE_NUMBER_WORD_RE,
     TIMESTAMP_FORMAT_HELP,
     UPSCALE_FACTOR,
@@ -46,13 +51,15 @@ from extract_code_from_video import (
     OCREngineUnavailableError,
     OCRLine,
     OCRResult,
-    apply_crop,
     console,
-    create_ocr_engine,
     fail,
-    get_video_metadata,
-    preprocess_frame,
     require_cv2,
+)
+from video_ocr.ocr import (
+    create_ocr_engine,
+)
+from video_ocr.video import (
+    get_video_metadata,
     resolve_extraction_parameters,
 )
 
@@ -445,15 +452,17 @@ def _keep_confident_segments(
             segment_right = max(segment_right, word.right)
 
     kept = segments[0]
+    noise_starts: list[float] = []
     for segment in segments[1:]:
         confidences = [
             word.confidence for word in segment if word.confidence is not None
         ]
         mean = sum(confidences) / len(confidences) if confidences else None
         if mean is not None and mean < MIN_SEGMENT_CONFIDENCE:
-            return kept, min(word.left for word in segment)
-        kept = kept + segment
-    return kept, None
+            noise_starts.append(min(word.left for word in segment))
+        else:
+            kept = kept + segment
+    return kept, min(noise_starts) if noise_starts else None
 
 
 def observe_frame(frame: ReferenceFrame, engine: OCREngine) -> FrameObservation:
@@ -517,10 +526,9 @@ def combine_observations(
     cuts only when a majority of the informing frames detected a noise column
     (minimap, scrollbar), and then at the rightmost detected noise start —
     never at the end of the code, since short lines would make that crop far
-    too aggressive. Kept text reaching past that boundary in other frames is
-    junk that leaked through the per-frame confidence filter (the noise
-    column sits at a fixed x across frames), so it does not push the cut
-    right. Empty-OCR observations contribute nothing; when none has text the
+    too aggressive. Retained text in ANY sampled observation can veto that
+    boundary: uncertain geometry must preserve text rather than assume it is
+    junk. Empty-OCR observations contribute nothing; when none has text the
     result is a zero crop with ``text_detected=False``.
     """
     analyzed = [observation.frame_index for observation in observations]
@@ -543,7 +551,12 @@ def combine_observations(
     margin = max(MIN_CROP_MARGIN_PX, round(line_height * CROP_MARGIN_FACTOR))
     noise_lefts = [g.noise_left for g in geometries if g.noise_left is not None]
     if 2 * len(noise_lefts) > len(geometries):
-        right = max(0, frame_width - round(max(noise_lefts)))
+        # Include fallback observations too: a long line can lack a gutter.
+        protected_right = max(
+            g.text_right + max(MIN_CROP_MARGIN_PX, g.line_height) for _, g in candidates
+        )
+        boundary = max(*noise_lefts, protected_right)
+        right = max(0, frame_width - math.ceil(boundary))
     else:
         right = 0
     crop = CropBox(

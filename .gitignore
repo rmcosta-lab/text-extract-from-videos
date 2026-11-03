@@ -9,3 +9,4 @@ sample-video/
 .uv-cache/
 .tools/
 example/*.MOV
+benchmarks/

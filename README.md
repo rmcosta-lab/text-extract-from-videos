@@ -193,29 +193,72 @@ inteiro com crop zero e avisa — ela nunca inventa uma região. Opções:
    de `relatorio_falhas.md`, `ocr_raw.csv`, `metadata_video.json`,
    `extraction_parameters.json` e `frames_usados/`.
 
-## Avaliação e próximas melhorias
+## Avaliação do trecho e melhorias implementadas
 
-A preparação com uv também corrigiu dois problemas reproduzidos no Windows:
-metadados ignorando a rotação do MOV (crop validado nas dimensões erradas) e
-setas Unicode nos logs causando falha em consoles CP1252.
+O caso de referência usa exatamente este intervalo e crop:
 
-Prioridades para as próximas alterações:
+```powershell
+uv run --group paddle-gpu python extract_code_from_video.py --video example/IMG_1128.MOV --engine paddle --output saida/trecho --start-time 3.5 --end-time 9 --crop-left 62 --crop-top 471 --crop-right 162 --crop-bottom 0
+```
 
-1. **Medir fidelidade do OCR.** Criar uma transcrição manual de alguns frames
-   de `IMG_1128.MOV` e comparar texto, indentação e numeração. O teste de
-   execução confirma o pipeline, mas não a correção do código reconstruído.
-   No trecho 2–4 s sem crop, o OCR incluiu ruído da interface e produziu erros
-   de caracteres; a contagem de linhas faltantes sozinha não mede qualidade.
-2. **Revisar a proteção do crop direito.** `combine_observations` assume que
-   texto além da coluna de ruído é lixo. Essa hipótese merece exemplos com
-   linhas longas e minimap antes de prometer que nenhum código será cortado.
-3. **Ajustar pré-processamento por engine.** O upscale fixo de 2x transforma
-   este vídeo em frames de 4320×7680, que o PaddleOCR reduz novamente para seu
-   limite de 4000 pixels. Comparar qualidade e tempo com resolução original,
-   crop e limites configuráveis antes de mudar os padrões.
-4. **Separar responsabilidades.** Extrair metadados, engines OCR,
-   reconstrução e relatórios do script principal para módulos menores,
-   mantendo os testes das funções e as duas interfaces de comando.
-5. **Automatizar validação.** CI com `uv sync --locked`, Ruff, mypy e testes
-   unitários; integração GPU em execução separada, com vídeo local e métricas
-   de qualidade. Evitar depender do MOV de 818 MB para testes unitários.
+- **Fidelidade:** transcrição visual parcial de 30 ocorrências de linhas em três
+  frames, com CER, WER, numeração e indentação. Veja o
+  [relatório e limitações](benchmarks/IMG_1128.md) e a
+  [referência manual](tests/fixtures/IMG_1128.reference.json).
+- **Crop direito:** texto retido em qualquer frame impede que a sugestão corte
+  essa região, mesmo contra uma maioria de votos de ruído. Testes incluem
+  linhas longas, minimap e frames sem coluna de números. Ainda é uma heurística
+  sobre frames amostrados: confirme visualmente o recorte antes da extração.
+- **Pré-processamento:** `--preprocess legacy` continua padrão. `native`
+  preserva cores e resolução após crop; `bounded` usa cores com `--ocr-scale`
+  (padrão 1) e `--ocr-max-side` (padrão 4000). Estes dois controles só afetam
+  `bounded`. A configuração fica em `extraction_parameters.json`. O preview
+  de crop continua usando `legacy`, com suas coordenadas em escala 2×.
+- **Módulos:** implementação em `video_ocr/`; os comandos existentes continuam
+  funcionando. O script principal reexporta os símbolos antigos por compatibilidade.
+- **CI:** Windows e Linux rodam Ruff, mypy e testes sem vídeo/GPU em push e PR.
+  A integração GPU é manual e separada, com referência local e métricas.
+
+No trecho medido, `legacy` teve CER de 7,08%; as variantes coloridas ficaram
+próximas de 28%. Por isso, não houve troca automática do padrão. A medição é
+parcial e não garante fidelidade do documento inteiro.
+
+```powershell
+# Comparação na GPU; salva métricas, OCR bruto e imagens para conferência:
+uv run --group paddle-gpu python evaluate_ocr.py --require-gpu
+# Testes rápidos, sem vídeo, Tesseract ou GPU:
+uv run pytest -m "not integration and not gpu"
+# Integração local com o vídeo:
+$env:TEST_OCR_ENGINE = "paddle"
+$env:REQUIRE_TEST_VIDEO = "1"
+uv run --group paddle-gpu pytest -m integration
+Remove-Item Env:TEST_OCR_ENGINE, Env:REQUIRE_TEST_VIDEO
+```
+
+### Organização
+
+| Módulo | Responsabilidade |
+|---|---|
+| `video_ocr/models.py` | Modelos compartilhados, constantes e utilitários básicos |
+| `video_ocr/video.py` | Metadados, intervalo e amostragem |
+| `video_ocr/imaging.py` | Crop, seleção visual e pré-processamento |
+| `video_ocr/ocr.py` | Tesseract e PaddleOCR |
+| `video_ocr/pipeline.py` | Seleção e OCR dos frames |
+| `video_ocr/reconstruction.py` | Numeração, fusão, lacunas e trechos não extraídos |
+| `video_ocr/reports.py` | Artefatos e relatório de falhas |
+| `video_ocr/quality.py` | Comparação com transcrições manuais |
+| `video_ocr/cli.py` | Comando de extração |
+
+### Integração GPU no GitHub Actions
+
+O workflow manual `Local GPU integration` requer um runner próprio Windows x64
+com label `gpu`, driver NVIDIA, `ffprobe` no PATH e a variável de ambiente
+`OCR_TEST_VIDEO` apontando para o MOV fora do checkout. A preparação copia esse
+arquivo para `example/IMG_1128.MOV`; o vídeo não é enviado ao repositório.
+Os modelos precisam estar em cache ou a primeira execução precisa de rede.
+O workflow registra métricas e verifica CER ≤10% e numeração ≥85% no perfil
+`legacy`, além dos testes e da execução do trecho. Os workflows foram preparados
+localmente; sua execução no GitHub depende de commit/push e do runner configurado.
+
+Fontes de configuração: [uv no GitHub Actions](https://docs.astral.sh/uv/guides/integration/github/)
+e [seleção de runners](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job).

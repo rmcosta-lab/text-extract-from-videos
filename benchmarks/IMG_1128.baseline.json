@@ -1,0 +1,1561 @@
+{
+  "reference": {
+    "video": "example/IMG_1128.MOV",
+    "start_time": "3.5",
+    "end_time": "9",
+    "crop": {
+      "left": 62,
+      "top": 471,
+      "right": 162,
+      "bottom": 0
+    },
+    "method": "Partial manual visual transcription of readable lines, made from original frames before evaluating OCR variants. Blank, occluded and diagram lines are excluded. Indentation is visual space-equivalent; tabs versus spaces cannot be determined from video. These samples measure selected-line recall and errors, not whole-document accuracy or false positives.",
+    "samples": [
+      {
+        "frame_index": 210,
+        "lines": [
+          {
+            "number": 9,
+            "text": "## Mapa da documentação",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 11,
+            "text": "### Conceitual",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 13,
+            "text": "| Documento | O que cobre |",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 14,
+            "text": "|---|---|",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 17,
+            "text": "| [`getting-started.md`](./getting-started.md) | Quickstart mínimo (já existente) |",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 18,
+            "text": "| [`index.md`](./index.md) | Índice raiz Sphinx + MyST (já existente) |",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 20,
+            "text": "### Referência por módulo",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 22,
+            "text": "| Módulo | Documento | Símbolos principais |",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 23,
+            "text": "|---|---|---|",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 34,
+            "text": "## Por onde começar",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 45,
+            "text": "  - Estrutura do pacote",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 46,
+            "text": "  - Pipeline canônico",
+            "exclude": false,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "frame_index": 360,
+        "lines": [
+          {
+            "number": 9,
+            "text": "## Mapa da documentação",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 11,
+            "text": "### Conceitual",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 13,
+            "text": "| Documento | O que cobre |",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 14,
+            "text": "|---|---|",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 15,
+            "text": "| [`visao-geral.md`](./visao-geral.md) | O que é a biblioteca, filosofia, estrutura, compatibilidade, pipeline canônico |",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 17,
+            "text": "| [`getting-started.md`](./getting-started.md) | Quickstart mínimo (já existente) |",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 18,
+            "text": "| [`index.md`](./index.md) | Índice raiz Sphinx + MyST (já existente) |",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 20,
+            "text": "### Referência por módulo",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 22,
+            "text": "| Módulo | Documento | Símbolos principais |",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 23,
+            "text": "|---|---|---|",
+            "exclude": false,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "frame_index": 510,
+        "lines": [
+          {
+            "number": 34,
+            "text": "## Por onde começar",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 54,
+            "text": "### 4. **Vou usar `X`** → vá ao módulo",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 61,
+            "text": "- MLflow I/O + dados sintéticos → [`modulos/data.md`](./modulos/data.md)",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 62,
+            "text": "- Introspecção de `PipelineModel` → [`modulos/core.md`](./modulos/core.md)",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 64,
+            "text": "---",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 66,
+            "text": "## Fluxo de uso recomendado",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 68,
+            "text": "```text",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 69,
+            "text": "1. make_synth_tabular",
+            "exclude": false,
+            "reason": null
+          },
+          {
+            "number": 78,
+            "text": "3. make_pipeline_from_report ──> Pipeline Spark",
+            "exclude": true,
+            "reason": "Arrow glyph cannot be transcribed unambiguously from the image."
+          }
+        ]
+      }
+    ]
+  },
+  "reference_sha256": "4c5be8fff367284407066392c5966da18aecb808127229e1153ad528593d879d",
+  "video_sha256": "900cb6eba00206d82b4a887d1f4a9d0e91d058363eeaa7b725d73e1d4beeb04d",
+  "metadata": {
+    "fps": 59.97513577177256,
+    "duration_seconds": 76.415,
+    "width": 2160,
+    "height": 3840,
+    "total_frames": 4583,
+    "codec": "hevc",
+    "source": "ffprobe",
+    "sampling_strategy": ""
+  },
+  "python": "3.13.8",
+  "versions": {
+    "paddleocr": "3.4.1",
+    "paddlepaddle-gpu": "3.2.2",
+    "opencv-contrib-python": "4.10.0.84"
+  },
+  "timing": "One warm-up per profile excluded; preprocessing + OCR only. Single measurement, not a statistically robust benchmark.",
+  "variants": [
+    {
+      "config": {
+        "profile": "legacy",
+        "scale": 2.0,
+        "max_side": 4000
+      },
+      "seconds": 2.7179894999999306,
+      "summary": {
+        "reference_lines": 30,
+        "matched_lines": 29,
+        "exact_text_lines": 6,
+        "correct_numbers": 28,
+        "correct_indentation": 22,
+        "cer": 0.0708215297450425,
+        "wer": 0.37254901960784315
+      },
+      "samples": [
+        {
+          "frame_index": 210,
+          "seconds": 0.8464656999999534,
+          "processed_shape": [
+            6738,
+            3872
+          ],
+          "scores": [
+            {
+              "expected_number": 9,
+              "expected": "## Mapa da documentação",
+              "actual_number": 9,
+              "actual": "*# Mapa da documentação",
+              "character_errors": 1,
+              "reference_characters": 23,
+              "word_errors": 1,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 11,
+              "expected": "### Conceitual",
+              "actual_number": 11,
+              "actual": "### Conceitual",
+              "character_errors": 0,
+              "reference_characters": 14,
+              "word_errors": 0,
+              "reference_words": 2,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 13,
+              "expected": "| Documento | O que cobre |",
+              "actual_number": 13,
+              "actual": "| Documento | 0 que cobre |",
+              "character_errors": 1,
+              "reference_characters": 27,
+              "word_errors": 1,
+              "reference_words": 7,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 14,
+              "expected": "|---|---|",
+              "actual_number": 14,
+              "actual": "|---|---|",
+              "character_errors": 0,
+              "reference_characters": 9,
+              "word_errors": 0,
+              "reference_words": 1,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 17,
+              "expected": "| [`getting-started.md`](./getting-started.md) | Quickstart mínimo (já existente) |",
+              "actual_number": 17,
+              "actual": "I ('getting-started.md ](./getting-started.md) | Quickstart minimo (ja existente) |",
+              "character_errors": 6,
+              "reference_characters": 83,
+              "word_errors": 5,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 18,
+              "expected": "| [`index.md`](./index.md) | Índice raiz Sphinx + MyST (já existente) |",
+              "actual_number": 18,
+              "actual": "I (^index.md ](./index.md) | fndice raiz Sphinx + MyST (ja existente) |",
+              "character_errors": 6,
+              "reference_characters": 71,
+              "word_errors": 5,
+              "reference_words": 11,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 20,
+              "expected": "### Referência por módulo",
+              "actual_number": 20,
+              "actual": "### Referéncia por modulo",
+              "character_errors": 2,
+              "reference_characters": 25,
+              "word_errors": 2,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 22,
+              "expected": "| Módulo | Documento | Símbolos principais |",
+              "actual_number": 22,
+              "actual": "I Modulo | Documento | Simbolos principais |",
+              "character_errors": 3,
+              "reference_characters": 44,
+              "word_errors": 3,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 23,
+              "expected": "|---|---|---|",
+              "actual_number": 23,
+              "actual": "|---|---|---|",
+              "character_errors": 0,
+              "reference_characters": 13,
+              "word_errors": 0,
+              "reference_words": 1,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 34,
+              "expected": "## Por onde começar",
+              "actual_number": 34,
+              "actual": "## Por onde comecar",
+              "character_errors": 1,
+              "reference_characters": 19,
+              "word_errors": 1,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 45,
+              "expected": "  - Estrutura do pacote",
+              "actual_number": 45,
+              "actual": "  - Estrutura do pacote",
+              "character_errors": 0,
+              "reference_characters": 21,
+              "word_errors": 0,
+              "reference_words": 4,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 46,
+              "expected": "  - Pipeline canônico",
+              "actual_number": 46,
+              "actual": "  - Pipeline canonico",
+              "character_errors": 1,
+              "reference_characters": 19,
+              "word_errors": 1,
+              "reference_words": 3,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            }
+          ]
+        },
+        {
+          "frame_index": 360,
+          "seconds": 0.9213146000001871,
+          "processed_shape": [
+            6738,
+            3872
+          ],
+          "scores": [
+            {
+              "expected_number": 9,
+              "expected": "## Mapa da documentação",
+              "actual_number": 9,
+              "actual": "## Mapa da documentacão",
+              "character_errors": 1,
+              "reference_characters": 23,
+              "word_errors": 1,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 11,
+              "expected": "### Conceitual",
+              "actual_number": 11,
+              "actual": "### Conceitual",
+              "character_errors": 0,
+              "reference_characters": 14,
+              "word_errors": 0,
+              "reference_words": 2,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 13,
+              "expected": "| Documento | O que cobre |",
+              "actual_number": 13,
+              "actual": "| Documento | 0 que cobre |",
+              "character_errors": 1,
+              "reference_characters": 27,
+              "word_errors": 1,
+              "reference_words": 7,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 14,
+              "expected": "|---|---|",
+              "actual_number": 14,
+              "actual": "j---|---|",
+              "character_errors": 1,
+              "reference_characters": 9,
+              "word_errors": 1,
+              "reference_words": 1,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 15,
+              "expected": "| [`visao-geral.md`](./visao-geral.md) | O que é a biblioteca, filosofia, estrutura, compatibilidade, pipeline canônico |",
+              "actual_number": 15,
+              "actual": "I ('visao-geral.md ](./viseo-geral.md) | O que é a biblioteca, filosofia, estrutura, compatibilidade, pipeline canonico |",
+              "character_errors": 6,
+              "reference_characters": 121,
+              "word_errors": 4,
+              "reference_words": 14,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 17,
+              "expected": "| [`getting-started.md`](./getting-started.md) | Quickstart mínimo (já existente) |",
+              "actual_number": 17,
+              "actual": "I ( getting-started.md ](./getting-started.md) | Quickstart minimo (ja existente) |",
+              "character_errors": 6,
+              "reference_characters": 83,
+              "word_errors": 6,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 18,
+              "expected": "| [`index.md`](./index.md) | Índice raiz Sphinx + MyST (já existente) |",
+              "actual_number": 18,
+              "actual": "I (^index.md](./index.md) | fndice raiz Sphinx + MySt (ja existente) |",
+              "character_errors": 7,
+              "reference_characters": 71,
+              "word_errors": 5,
+              "reference_words": 11,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 20,
+              "expected": "### Referência por módulo",
+              "actual_number": 20,
+              "actual": "#n# Referéncia por módulo",
+              "character_errors": 2,
+              "reference_characters": 25,
+              "word_errors": 2,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 22,
+              "expected": "| Módulo | Documento | Símbolos principais |",
+              "actual_number": 22,
+              "actual": "| Modulo | Documento | Simbolos principais |",
+              "character_errors": 2,
+              "reference_characters": 44,
+              "word_errors": 2,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": true
+            },
+            {
+              "expected_number": 23,
+              "expected": "|---|---|---|",
+              "actual_number": 23,
+              "actual": "|---|---|---|",
+              "character_errors": 0,
+              "reference_characters": 13,
+              "word_errors": 0,
+              "reference_words": 1,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": true
+            }
+          ]
+        },
+        {
+          "frame_index": 510,
+          "seconds": 0.9502091999997901,
+          "processed_shape": [
+            6738,
+            3872
+          ],
+          "scores": [
+            {
+              "expected_number": 34,
+              "expected": "## Por onde começar",
+              "actual_number": 34,
+              "actual": "      #* Por onde começar",
+              "character_errors": 1,
+              "reference_characters": 19,
+              "word_errors": 1,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 54,
+              "expected": "### 4. **Vou usar `X`** → vá ao módulo",
+              "actual_number": 54,
+              "actual": "      *## 4. **Vou usar 'x'** → vá ao módulo",
+              "character_errors": 4,
+              "reference_characters": 38,
+              "word_errors": 2,
+              "reference_words": 9,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 61,
+              "expected": "- MLflow I/O + dados sintéticos → [`modulos/data.md`](./modulos/data.md)",
+              "actual_number": 61,
+              "actual": "       - MLflow I/0 + dedos sintéticos → ('modulos/data.md ](./modulos/data.md)",
+              "character_errors": 5,
+              "reference_characters": 72,
+              "word_errors": 4,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 62,
+              "expected": "- Introspecção de `PipelineModel` → [`modulos/core.md`](./modulos/core.md)",
+              "actual_number": 62,
+              "actual": "      - Introspecc&o de PipelineModel → ('modulos/core.md ](./modulos/core.md)",
+              "character_errors": 7,
+              "reference_characters": 74,
+              "word_errors": 4,
+              "reference_words": 6,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 64,
+              "expected": "---",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 3,
+              "reference_characters": 3,
+              "word_errors": 1,
+              "reference_words": 1,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 66,
+              "expected": "## Fluxo de uso recomendado",
+              "actual_number": 66,
+              "actual": "      *# Fluxo de uso recomendado",
+              "character_errors": 1,
+              "reference_characters": 27,
+              "word_errors": 1,
+              "reference_words": 5,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 68,
+              "expected": "```text",
+              "actual_number": 68,
+              "actual": "     ….text",
+              "character_errors": 3,
+              "reference_characters": 7,
+              "word_errors": 1,
+              "reference_words": 1,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 69,
+              "expected": "1. make_synth_tabular",
+              "actual_number": 1,
+              "actual": " make synth_tabular",
+              "character_errors": 4,
+              "reference_characters": 21,
+              "word_errors": 2,
+              "reference_words": 2,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "config": {
+        "profile": "native",
+        "scale": 2.0,
+        "max_side": 4000
+      },
+      "seconds": 1.9299784999998337,
+      "summary": {
+        "reference_lines": 30,
+        "matched_lines": 23,
+        "exact_text_lines": 9,
+        "correct_numbers": 22,
+        "correct_indentation": 0,
+        "cer": 0.2776203966005666,
+        "wer": 0.45098039215686275
+      },
+      "samples": [
+        {
+          "frame_index": 210,
+          "seconds": 0.5779222999999547,
+          "processed_shape": [
+            3369,
+            1936,
+            3
+          ],
+          "scores": [
+            {
+              "expected_number": 9,
+              "expected": "## Mapa da documentação",
+              "actual_number": 9,
+              "actual": "      ## Mapa da documentação",
+              "character_errors": 0,
+              "reference_characters": 23,
+              "word_errors": 0,
+              "reference_words": 4,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 11,
+              "expected": "### Conceitual",
+              "actual_number": 11,
+              "actual": "      ### Conceitual",
+              "character_errors": 0,
+              "reference_characters": 14,
+              "word_errors": 0,
+              "reference_words": 2,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 13,
+              "expected": "| Documento | O que cobre |",
+              "actual_number": 13,
+              "actual": "       I Documento | 0 que cobre |",
+              "character_errors": 2,
+              "reference_characters": 27,
+              "word_errors": 2,
+              "reference_words": 7,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 14,
+              "expected": "|---|---|",
+              "actual_number": 14,
+              "actual": "      |---|---|",
+              "character_errors": 0,
+              "reference_characters": 9,
+              "word_errors": 0,
+              "reference_words": 1,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 17,
+              "expected": "| [`getting-started.md`](./getting-started.md) | Quickstart mínimo (já existente) |",
+              "actual_number": 17,
+              "actual": "       I (getting-started.md](./getting-started.md) | Quickstart mínimo (já existente)|",
+              "character_errors": 5,
+              "reference_characters": 83,
+              "word_errors": 4,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 18,
+              "expected": "| [`index.md`](./index.md) | Índice raiz Sphinx + MyST (já existente) |",
+              "actual_number": 18,
+              "actual": "       I [index.md ](./index.md) | Indice raiz Sphinx + MyST (ja existente) |",
+              "character_errors": 5,
+              "reference_characters": 71,
+              "word_errors": 5,
+              "reference_words": 11,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 20,
+              "expected": "### Referência por módulo",
+              "actual_number": 20,
+              "actual": "      ### Referéncia por módulo",
+              "character_errors": 1,
+              "reference_characters": 25,
+              "word_errors": 1,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 22,
+              "expected": "| Módulo | Documento | Símbolos principais |",
+              "actual_number": 22,
+              "actual": "       I Módulo | Documento | Símbolos principais |",
+              "character_errors": 1,
+              "reference_characters": 44,
+              "word_errors": 1,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 23,
+              "expected": "|---|---|---|",
+              "actual_number": 23,
+              "actual": "       |---|---|---|",
+              "character_errors": 0,
+              "reference_characters": 13,
+              "word_errors": 0,
+              "reference_words": 1,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 34,
+              "expected": "## Por onde começar",
+              "actual_number": 34,
+              "actual": "       ## Por onde comecar",
+              "character_errors": 1,
+              "reference_characters": 19,
+              "word_errors": 1,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 45,
+              "expected": "  - Estrutura do pacote",
+              "actual_number": 45,
+              "actual": "          Estrutura do pacote",
+              "character_errors": 2,
+              "reference_characters": 21,
+              "word_errors": 1,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 46,
+              "expected": "  - Pipeline canônico",
+              "actual_number": 46,
+              "actual": "          Pipeline canônico",
+              "character_errors": 2,
+              "reference_characters": 19,
+              "word_errors": 1,
+              "reference_words": 3,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            }
+          ]
+        },
+        {
+          "frame_index": 360,
+          "seconds": 0.7003991999999926,
+          "processed_shape": [
+            3369,
+            1936,
+            3
+          ],
+          "scores": [
+            {
+              "expected_number": 9,
+              "expected": "## Mapa da documentação",
+              "actual_number": 9,
+              "actual": "      ## Mapa da documentação",
+              "character_errors": 0,
+              "reference_characters": 23,
+              "word_errors": 0,
+              "reference_words": 4,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 11,
+              "expected": "### Conceitual",
+              "actual_number": 11,
+              "actual": "      ### Conceitual",
+              "character_errors": 0,
+              "reference_characters": 14,
+              "word_errors": 0,
+              "reference_words": 2,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 13,
+              "expected": "| Documento | O que cobre |",
+              "actual_number": 13,
+              "actual": "       I Documento | o que cobre |",
+              "character_errors": 2,
+              "reference_characters": 27,
+              "word_errors": 2,
+              "reference_words": 7,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 14,
+              "expected": "|---|---|",
+              "actual_number": 14,
+              "actual": "       |---|---|",
+              "character_errors": 0,
+              "reference_characters": 9,
+              "word_errors": 0,
+              "reference_words": 1,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 15,
+              "expected": "| [`visao-geral.md`](./visao-geral.md) | O que é a biblioteca, filosofia, estrutura, compatibilidade, pipeline canônico |",
+              "actual_number": 15,
+              "actual": "       I ['visao-geral.md ](./visao-geral.md) | 0 que é a biblioteca, filosofia, estrutura, compatibilidade, pipeline canônico |",
+              "character_errors": 4,
+              "reference_characters": 121,
+              "word_errors": 4,
+              "reference_words": 14,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 17,
+              "expected": "| [`getting-started.md`](./getting-started.md) | Quickstart mínimo (já existente) |",
+              "actual_number": 17,
+              "actual": "        [^getting-started.md](./getting-started.md) |Quickstart minimo (já existente) |",
+              "character_errors": 6,
+              "reference_characters": 83,
+              "word_errors": 5,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 18,
+              "expected": "| [`index.md`](./index.md) | Índice raiz Sphinx + MyST (já existente) |",
+              "actual_number": 18,
+              "actual": "       I [\"index.md](./index.md) | Indice raiz Sphinx + MyST (já existente)|",
+              "character_errors": 5,
+              "reference_characters": 71,
+              "word_errors": 5,
+              "reference_words": 11,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 20,
+              "expected": "### Referência por módulo",
+              "actual_number": 20,
+              "actual": "      ### Referência por módulo",
+              "character_errors": 0,
+              "reference_characters": 25,
+              "word_errors": 0,
+              "reference_words": 4,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 22,
+              "expected": "| Módulo | Documento | Símbolos principais |",
+              "actual_number": 22,
+              "actual": "       I Módulo | Documento | Símbolos principais |",
+              "character_errors": 1,
+              "reference_characters": 44,
+              "word_errors": 1,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 23,
+              "expected": "|---|---|---|",
+              "actual_number": 23,
+              "actual": "       |---|---|---|",
+              "character_errors": 0,
+              "reference_characters": 13,
+              "word_errors": 0,
+              "reference_words": 1,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            }
+          ]
+        },
+        {
+          "frame_index": 510,
+          "seconds": 0.6516569999998865,
+          "processed_shape": [
+            3369,
+            1936,
+            3
+          ],
+          "scores": [
+            {
+              "expected_number": 34,
+              "expected": "## Por onde começar",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 19,
+              "reference_characters": 19,
+              "word_errors": 4,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 54,
+              "expected": "### 4. **Vou usar `X`** → vá ao módulo",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 38,
+              "reference_characters": 38,
+              "word_errors": 9,
+              "reference_words": 9,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 61,
+              "expected": "- MLflow I/O + dados sintéticos → [`modulos/data.md`](./modulos/data.md)",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 72,
+              "reference_characters": 72,
+              "word_errors": 8,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 62,
+              "expected": "- Introspecção de `PipelineModel` → [`modulos/core.md`](./modulos/core.md)",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 74,
+              "reference_characters": 74,
+              "word_errors": 6,
+              "reference_words": 6,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 64,
+              "expected": "---",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 3,
+              "reference_characters": 3,
+              "word_errors": 1,
+              "reference_words": 1,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 66,
+              "expected": "## Fluxo de uso recomendado",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 27,
+              "reference_characters": 27,
+              "word_errors": 5,
+              "reference_words": 5,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 68,
+              "expected": "```text",
+              "actual_number": 104,
+              "actual": "       text",
+              "character_errors": 3,
+              "reference_characters": 7,
+              "word_errors": 1,
+              "reference_words": 1,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 69,
+              "expected": "1. make_synth_tabular",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 21,
+              "reference_characters": 21,
+              "word_errors": 2,
+              "reference_words": 2,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "config": {
+        "profile": "bounded",
+        "scale": 2.0,
+        "max_side": 4000
+      },
+      "seconds": 2.2819305999996686,
+      "summary": {
+        "reference_lines": 30,
+        "matched_lines": 23,
+        "exact_text_lines": 9,
+        "correct_numbers": 22,
+        "correct_indentation": 0,
+        "cer": 0.279508970727101,
+        "wer": 0.45751633986928103
+      },
+      "samples": [
+        {
+          "frame_index": 210,
+          "seconds": 0.7091857999998865,
+          "processed_shape": [
+            4000,
+            2299,
+            3
+          ],
+          "scores": [
+            {
+              "expected_number": 9,
+              "expected": "## Mapa da documentação",
+              "actual_number": 9,
+              "actual": "      ## Mapa da documentação",
+              "character_errors": 0,
+              "reference_characters": 23,
+              "word_errors": 0,
+              "reference_words": 4,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 11,
+              "expected": "### Conceitual",
+              "actual_number": 11,
+              "actual": "      ### Conceitual",
+              "character_errors": 0,
+              "reference_characters": 14,
+              "word_errors": 0,
+              "reference_words": 2,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 13,
+              "expected": "| Documento | O que cobre |",
+              "actual_number": 13,
+              "actual": "        Documento | 0 que cobreI",
+              "character_errors": 5,
+              "reference_characters": 27,
+              "word_errors": 4,
+              "reference_words": 7,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 14,
+              "expected": "|---|---|",
+              "actual_number": 14,
+              "actual": "       |---|---|",
+              "character_errors": 0,
+              "reference_characters": 9,
+              "word_errors": 0,
+              "reference_words": 1,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 17,
+              "expected": "| [`getting-started.md`](./getting-started.md) | Quickstart mínimo (já existente) |",
+              "actual_number": 17,
+              "actual": "       I (getting-started.md ](./getting-started.md) | Quickstart minimo (já existente) |",
+              "character_errors": 5,
+              "reference_characters": 83,
+              "word_errors": 4,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 18,
+              "expected": "| [`index.md`](./index.md) | Índice raiz Sphinx + MyST (já existente) |",
+              "actual_number": 18,
+              "actual": "       I [index.md](./index.md) | fndice raiz Sphinx + MyST (jáexistente)|",
+              "character_errors": 6,
+              "reference_characters": 71,
+              "word_errors": 6,
+              "reference_words": 11,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 20,
+              "expected": "### Referência por módulo",
+              "actual_number": 20,
+              "actual": "      ### Referéncia por módulo",
+              "character_errors": 1,
+              "reference_characters": 25,
+              "word_errors": 1,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 22,
+              "expected": "| Módulo | Documento | Símbolos principais |",
+              "actual_number": 22,
+              "actual": "       I Módulo | Documento | Símbolos principais |",
+              "character_errors": 1,
+              "reference_characters": 44,
+              "word_errors": 1,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 23,
+              "expected": "|---|---|---|",
+              "actual_number": 23,
+              "actual": "       |---|---|---|",
+              "character_errors": 0,
+              "reference_characters": 13,
+              "word_errors": 0,
+              "reference_words": 1,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 34,
+              "expected": "## Por onde começar",
+              "actual_number": 34,
+              "actual": "       ## Por onde comecar",
+              "character_errors": 1,
+              "reference_characters": 19,
+              "word_errors": 1,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 45,
+              "expected": "  - Estrutura do pacote",
+              "actual_number": 45,
+              "actual": "           Estrutura do pacote",
+              "character_errors": 2,
+              "reference_characters": 21,
+              "word_errors": 1,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 46,
+              "expected": "  - Pipeline canônico",
+              "actual_number": 46,
+              "actual": "          Pipeline canônico",
+              "character_errors": 2,
+              "reference_characters": 19,
+              "word_errors": 1,
+              "reference_words": 3,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            }
+          ]
+        },
+        {
+          "frame_index": 360,
+          "seconds": 0.8122142999995958,
+          "processed_shape": [
+            4000,
+            2299,
+            3
+          ],
+          "scores": [
+            {
+              "expected_number": 9,
+              "expected": "## Mapa da documentação",
+              "actual_number": 9,
+              "actual": "      ## Mapa da documentação",
+              "character_errors": 0,
+              "reference_characters": 23,
+              "word_errors": 0,
+              "reference_words": 4,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 11,
+              "expected": "### Conceitual",
+              "actual_number": 11,
+              "actual": "      ### Conceitual",
+              "character_errors": 0,
+              "reference_characters": 14,
+              "word_errors": 0,
+              "reference_words": 2,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 13,
+              "expected": "| Documento | O que cobre |",
+              "actual_number": 13,
+              "actual": "       I Documento | o que cobre |",
+              "character_errors": 2,
+              "reference_characters": 27,
+              "word_errors": 2,
+              "reference_words": 7,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 14,
+              "expected": "|---|---|",
+              "actual_number": 14,
+              "actual": "       |---|---|",
+              "character_errors": 0,
+              "reference_characters": 9,
+              "word_errors": 0,
+              "reference_words": 1,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 15,
+              "expected": "| [`visao-geral.md`](./visao-geral.md) | O que é a biblioteca, filosofia, estrutura, compatibilidade, pipeline canônico |",
+              "actual_number": 15,
+              "actual": "       I ['visao-geral.md ](./visao-geral.md) | 0 que é a biblioteca, filosofia, estrutura, compatibilidade, pipeline cannico |",
+              "character_errors": 5,
+              "reference_characters": 121,
+              "word_errors": 5,
+              "reference_words": 14,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 17,
+              "expected": "| [`getting-started.md`](./getting-started.md) | Quickstart mínimo (já existente) |",
+              "actual_number": 17,
+              "actual": "       I [getting-started.md](./getting-started.md) | Quickstart minimo (já existente) |",
+              "character_errors": 4,
+              "reference_characters": 83,
+              "word_errors": 3,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 18,
+              "expected": "| [`index.md`](./index.md) | Índice raiz Sphinx + MyST (já existente) |",
+              "actual_number": 18,
+              "actual": "       I [index.md](./index.md) | fndice raiz Sphinx + MyST (já existente) |",
+              "character_errors": 4,
+              "reference_characters": 71,
+              "word_errors": 3,
+              "reference_words": 11,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 20,
+              "expected": "### Referência por módulo",
+              "actual_number": 20,
+              "actual": "      ### Referência por módulo",
+              "character_errors": 0,
+              "reference_characters": 25,
+              "word_errors": 0,
+              "reference_words": 4,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 22,
+              "expected": "| Módulo | Documento | Símbolos principais |",
+              "actual_number": 22,
+              "actual": "       | Módulo | Documento| Símbolos principais |",
+              "character_errors": 1,
+              "reference_characters": 44,
+              "word_errors": 2,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": true,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 23,
+              "expected": "|---|---|---|",
+              "actual_number": 23,
+              "actual": "       |---|---|---|",
+              "character_errors": 0,
+              "reference_characters": 13,
+              "word_errors": 0,
+              "reference_words": 1,
+              "exact_text": true,
+              "correct_number": true,
+              "correct_indentation": false
+            }
+          ]
+        },
+        {
+          "frame_index": 510,
+          "seconds": 0.7605305000001863,
+          "processed_shape": [
+            4000,
+            2299,
+            3
+          ],
+          "scores": [
+            {
+              "expected_number": 34,
+              "expected": "## Por onde começar",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 19,
+              "reference_characters": 19,
+              "word_errors": 4,
+              "reference_words": 4,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 54,
+              "expected": "### 4. **Vou usar `X`** → vá ao módulo",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 38,
+              "reference_characters": 38,
+              "word_errors": 9,
+              "reference_words": 9,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 61,
+              "expected": "- MLflow I/O + dados sintéticos → [`modulos/data.md`](./modulos/data.md)",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 72,
+              "reference_characters": 72,
+              "word_errors": 8,
+              "reference_words": 8,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 62,
+              "expected": "- Introspecção de `PipelineModel` → [`modulos/core.md`](./modulos/core.md)",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 74,
+              "reference_characters": 74,
+              "word_errors": 6,
+              "reference_words": 6,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 64,
+              "expected": "---",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 3,
+              "reference_characters": 3,
+              "word_errors": 1,
+              "reference_words": 1,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 66,
+              "expected": "## Fluxo de uso recomendado",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 27,
+              "reference_characters": 27,
+              "word_errors": 5,
+              "reference_words": 5,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 68,
+              "expected": "```text",
+              "actual_number": 104,
+              "actual": "   text",
+              "character_errors": 3,
+              "reference_characters": 7,
+              "word_errors": 1,
+              "reference_words": 1,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            },
+            {
+              "expected_number": 69,
+              "expected": "1. make_synth_tabular",
+              "actual_number": null,
+              "actual": null,
+              "character_errors": 21,
+              "reference_characters": 21,
+              "word_errors": 2,
+              "reference_words": 2,
+              "exact_text": false,
+              "correct_number": false,
+              "correct_indentation": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -64,7 +64,7 @@ allowed-confusables = ["×"] # dimension strings such as "3840×2160"
 
 [tool.mypy]
 python_version = "3.13"
-files = ["extract_code_from_video.py", "suggest_crop.py", "test_*.py"]
+files = ["video_ocr", "extract_code_from_video.py", "suggest_crop.py", "evaluate_ocr.py", "test_*.py"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
@@ -78,3 +78,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["."]
 addopts = "-q"
+markers = [
+    "integration: needs a local video and optionally an OCR runtime",
+    "gpu: requires a working NVIDIA GPU and PaddleOCR models",
+]

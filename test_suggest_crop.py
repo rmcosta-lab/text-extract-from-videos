@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+import suggest_crop as crop_module
 from extract_code_from_video import (
     UPSCALE_FACTOR,
     CropBox,
@@ -31,8 +32,11 @@ from suggest_crop import (
     THUMBNAIL_WIDTH,
     FrameObservation,
     ReferenceFrame,
+    SampledFrames,
     TextGeometry,
+    WordBox,
     _crop_error,
+    _keep_confident_segments,
     combine_observations,
     create_app,
     read_sampled_frames,
@@ -216,8 +220,11 @@ def test_sample_indices_explicit_start_skips_the_reference_offset() -> None:
     assert indices[0] == 10 and indices[-1] == 1029
 
 
+@pytest.mark.integration
 def test_read_sampled_frames_respects_the_time_window() -> None:
     if not SAMPLE_VIDEO.is_file():
+        if os.environ.get("REQUIRE_TEST_VIDEO") == "1":
+            pytest.fail(f"required video missing: {SAMPLE_VIDEO}")
         pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
     metadata = get_video_metadata(SAMPLE_VIDEO)
     samples = read_sampled_frames(SAMPLE_VIDEO, 3, start_time="2", end_time="4")
@@ -231,15 +238,21 @@ def test_read_sampled_frames_respects_the_time_window() -> None:
     assert indices[-1] <= math.ceil(4 * metadata.fps)
 
 
+@pytest.mark.integration
 def test_read_sampled_frames_rejects_an_inverted_window() -> None:
     if not SAMPLE_VIDEO.is_file():
+        if os.environ.get("REQUIRE_TEST_VIDEO") == "1":
+            pytest.fail(f"required video missing: {SAMPLE_VIDEO}")
         pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
     with pytest.raises(InvalidExtractionParameterError):
         read_sampled_frames(SAMPLE_VIDEO, 3, start_time="5", end_time="2")
 
 
+@pytest.mark.integration
 def test_read_sampled_frames_rejects_a_subframe_window() -> None:
     if not SAMPLE_VIDEO.is_file():
+        if os.environ.get("REQUIRE_TEST_VIDEO") == "1":
+            pytest.fail(f"required video missing: {SAMPLE_VIDEO}")
         pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
     fps = get_video_metadata(SAMPLE_VIDEO).fps
     # A valid window that falls strictly between two frame timestamps: it must
@@ -297,10 +310,8 @@ def test_combine_noise_column_needs_a_majority() -> None:
     assert majority.crop.right == 600 - 560
 
 
-def test_combine_right_cut_stays_at_the_rightmost_noise_start() -> None:
-    # Both frames agree the noise column starts by x=500; frame 600's "kept"
-    # text reaching x=550 is junk that leaked past the per-frame confidence
-    # filter and must not push the cut right of the noise column.
+def test_combine_right_cut_preserves_a_long_retained_line() -> None:
+    # Noise evidence must not override a retained line reaching x=550.
     combined = combine_observations(
         [
             _observation(30, noise_left=500),
@@ -309,13 +320,11 @@ def test_combine_right_cut_stays_at_the_rightmost_noise_start() -> None:
         600,
         400,
     )
-    assert combined.crop.right == 600 - 500
+    assert combined.crop.right == 600 - 550 - 10
 
 
-def test_combine_right_cut_excludes_junk_merged_into_kept_text() -> None:
-    # Frame 600 never detected the noise column: the minimap junk merged into
-    # its kept text (text_right=590). The majority located the noise at
-    # x<=560, so the combined crop still cuts the column there.
+def test_combine_right_cut_is_vetoed_by_text_at_the_edge() -> None:
+    # A majority noise vote cannot justify clipping another frame's text.
     combined = combine_observations(
         [
             _observation(30, noise_left=560),
@@ -325,7 +334,7 @@ def test_combine_right_cut_excludes_junk_merged_into_kept_text() -> None:
         600,
         400,
     )
-    assert combined.crop.right == 600 - 560
+    assert combined.crop.right == 0
 
 
 def test_combine_ignores_empty_frames_and_reports_them() -> None:
@@ -372,12 +381,59 @@ def test_crop_error_reuses_validate_against() -> None:
     assert message is not None and "no image area" in message
 
 
+def test_long_fallback_line_can_veto_right_cut() -> None:
+    combined = combine_observations(
+        [
+            _observation(30, noise_left=500, gutter_anchored=True),
+            _observation(60, noise_left=500, gutter_anchored=True),
+            _observation(90, text_right=595),
+        ],
+        600,
+        400,
+    )
+    assert combined.crop.right == 0
+
+
+def test_confident_text_after_noise_is_not_discarded() -> None:
+    words = [
+        WordBox(text="code", left=10, right=40, top=0, bottom=10, confidence=99),
+        WordBox(text="noise", left=300, right=320, top=0, bottom=10, confidence=5),
+        WordBox(text="long_code", left=550, right=590, top=0, bottom=10, confidence=99),
+    ]
+    kept, noise = _keep_confident_segments(words, 600)
+    assert [word.text for word in kept] == ["code", "long_code"]
+    assert noise == 300
+
+
+def test_preview_and_crop_api_without_video(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        crop_module, "read_sampled_frames", lambda *a: SampledFrames(frames=[_frame()])
+    )
+    monkeypatch.setattr(
+        crop_module,
+        "create_ocr_engine",
+        lambda *a: FakeEngine(OCRResult(text="code", lines=_gutter_lines())),
+    )
+    with TestClient(create_app(Path("synthetic.mov"), EngineName.tesseract)) as client:
+        assert client.get("/").status_code == 200
+        data = client.get("/api/preview").json()
+        assert _png_size(data["original_png_base64"]) == (600, 400)
+        response = client.post(
+            "/api/crop", json={"left": 10, "top": 20, "right": 30, "bottom": 40}
+        )
+        assert _png_size(response.json()["cropped_png_base64"]) == (560, 340)
+        assert client.get("/api/frame/999").status_code == 404
+        assert client.post("/api/crop", json={"left": 600}).status_code == 422
+
+
 # --- API tests against the sample video -------------------------------------
 
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
     if not SAMPLE_VIDEO.is_file():
+        if os.environ.get("REQUIRE_TEST_VIDEO") == "1":
+            pytest.fail(f"required video missing: {SAMPLE_VIDEO}")
         pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
     try:
         engine = EngineName(os.environ.get("TEST_OCR_ENGINE", "tesseract"))
@@ -389,12 +445,14 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+@pytest.mark.integration
 def test_index_serves_page(client: TestClient) -> None:
     response = client.get("/")
     assert response.status_code == 200
     assert "Sugestão de crop" in response.text
 
 
+@pytest.mark.integration
 def test_preview_returns_valid_suggestion(client: TestClient) -> None:
     response = client.get("/api/preview")
     assert response.status_code == 200
@@ -423,6 +481,7 @@ def test_preview_returns_valid_suggestion(client: TestClient) -> None:
         assert width <= THUMBNAIL_WIDTH
 
 
+@pytest.mark.integration
 def test_full_frame_endpoint_serves_each_sampled_frame(client: TestClient) -> None:
     preview = client.get("/api/preview").json()
     for frame_index in preview["analyzed_frame_indices"]:
@@ -433,12 +492,14 @@ def test_full_frame_endpoint_serves_each_sampled_frame(client: TestClient) -> No
         assert (width, height) == (preview["frame_width"], preview["frame_height"])
 
 
+@pytest.mark.integration
 def test_full_frame_endpoint_rejects_unsampled_index(client: TestClient) -> None:
     response = client.get("/api/frame/999999")
     assert response.status_code == 404
     assert "was not sampled" in response.json()["detail"]
 
 
+@pytest.mark.integration
 def test_crop_endpoint_recrops_to_requested_box(client: TestClient) -> None:
     preview = client.get("/api/preview").json()
     body = {"left": 10, "top": 20, "right": 30, "bottom": 40}
@@ -458,6 +519,7 @@ def test_crop_endpoint_recrops_to_requested_box(client: TestClient) -> None:
     )
 
 
+@pytest.mark.integration
 def test_crop_endpoint_rejects_degenerate_values(client: TestClient) -> None:
     preview = client.get("/api/preview").json()
     half = preview["frame_width"] // 2 + 1
@@ -468,6 +530,7 @@ def test_crop_endpoint_rejects_degenerate_values(client: TestClient) -> None:
     assert "no image area" in response.json()["detail"]
 
 
+@pytest.mark.integration
 def test_crop_endpoint_rejects_negative_values(client: TestClient) -> None:
     response = client.post(
         "/api/crop", json={"left": -1, "top": 0, "right": 0, "bottom": 0}
