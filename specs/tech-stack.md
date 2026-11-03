@@ -135,3 +135,8 @@ requirement, not an aspiration.
   `is_frame_blurry()`, `run_ocr()`, `parse_code_lines()`, `merge_ocr_results()`,
   `detect_missing_lines()`, `write_outputs()`.
 - No hidden global state; pass typed models between stages.
+- Paddle OCR extraction and Explorer discovery now pin PP-OCRv6 medium detection
+  and recognition with PaddleOCR 3.7.x; existing discovery artifacts remain historical.
+- Optional extraction engine `paddle-vl`: direct local GPU PaddleOCR-VL-1.6,
+  PaddleOCR 3.7 doc-parser group, raw multiline text without fabricated geometry
+  or confidence. See [usage and limits](../docs/paddle-vl.md).

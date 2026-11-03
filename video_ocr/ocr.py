@@ -316,15 +316,15 @@ class PaddleOCREngine:
             )
         paddle_ocr = _require_paddleocr()
         try:
-            try:
-                self._reader = paddle_ocr(
-                    lang="en",
-                    use_doc_orientation_classify=False,
-                    use_doc_unwarping=False,
-                    use_textline_orientation=False,
-                )
-            except TypeError:
-                self._reader = paddle_ocr(lang="en")
+            self._reader = paddle_ocr(
+                lang="en",
+                ocr_version="PP-OCRv6",
+                text_detection_model_name="PP-OCRv6_medium_det",
+                text_recognition_model_name="PP-OCRv6_medium_rec",
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False,
+            )
         except Exception as exc:
             raise OCREngineUnavailableError(
                 f"PaddleOCR failed to initialize ({exc}). Ensure paddlepaddle "
@@ -377,6 +377,10 @@ class PaddleOCREngine:
 
 def create_ocr_engine(name: EngineName) -> OCREngine:
     """Instantiate the engine selected by ``--engine`` behind the seam."""
+    if name is EngineName.paddle_vl:
+        from video_ocr.paddle_vl import PaddleVLEngine  # noqa: PLC0415
+
+        return PaddleVLEngine()
     if name is EngineName.paddle:
         return PaddleOCREngine()
     return TesseractEngine()

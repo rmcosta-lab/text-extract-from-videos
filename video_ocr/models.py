@@ -330,6 +330,7 @@ class EngineName(StrEnum):
 
     tesseract = "tesseract"
     paddle = "paddle"
+    paddle_vl = "paddle-vl"
 
 
 class OutputExtension(StrEnum):

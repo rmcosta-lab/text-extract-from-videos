@@ -39,8 +39,8 @@ class LocalOCR:
             )
             / "official_models"
         )
-        detection = root / "PP-OCRv5_server_det"
-        recognition = root / "en_PP-OCRv5_mobile_rec"
+        detection = root / "PP-OCRv6_medium_det"
+        recognition = root / "PP-OCRv6_medium_rec"
         for folder in (detection, recognition):
             if not all(
                 (folder / file).is_file()
@@ -59,9 +59,9 @@ class LocalOCR:
                 "Install local OCR dependencies: uv sync --group paddle-gpu"
             ) from exc
         self.reader = PaddleOCR(
-            text_detection_model_name="PP-OCRv5_server_det",
+            text_detection_model_name="PP-OCRv6_medium_det",
             text_detection_model_dir=str(detection),
-            text_recognition_model_name="en_PP-OCRv5_mobile_rec",
+            text_recognition_model_name="PP-OCRv6_medium_rec",
             text_recognition_model_dir=str(recognition),
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
@@ -281,7 +281,7 @@ def discover(
                         "positive_location": positive_location,
                         "negative_location": {"frame": index, "seconds": timestamp},
                         "negative_panel_score": panel_score,
-                        "models": ["PP-OCRv5_server_det", "en_PP-OCRv5_mobile_rec"],
+                        "models": ["PP-OCRv6_medium_det", "PP-OCRv6_medium_rec"],
                     },
                     ensure_ascii=False,
                     indent=2,

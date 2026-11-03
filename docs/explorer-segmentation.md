@@ -1,5 +1,10 @@
 # Cortes locais quando o Explorer está oculto
 
+Novas descobertas automáticas usam PP-OCRv6 medium (detecção e reconhecimento).
+Os pesos locais precisam estar no cache antes de executar `auto`. A atualização
+não altera `profile.json`/`discovery.json` antigos: eles descrevem a execução
+original. Use uma nova pasta para descobrir referências com PP-OCRv6.
+
 ## Intervalos inteiros (novo padrão)
 
 `auto` e `split` usam `--interval-mode continuous --max-clip-seconds 0`:
@@ -48,7 +53,7 @@ O modo automático:
    transições, observações e cortes. A calibração manual abaixo é opcional.
 
 Pré-requisitos: bibliotecas do grupo `paddle-gpu` e modelos
-`PP-OCRv5_server_det` / `en_PP-OCRv5_mobile_rec` completos em
+`PP-OCRv6_medium_det` / `PP-OCRv6_medium_rec` completos em
 `~/.paddlex/official_models` (ou no diretório indicado por `--model-root`).
 O cache também respeita `PADDLE_PDX_CACHE_HOME`. Os caminhos dos modelos são
 passados explicitamente e a verificação remota é desativada. Se faltarem pesos,

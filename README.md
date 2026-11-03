@@ -37,6 +37,11 @@ Se necessário, instale com `winget install --id UB-Mannheim.TesseractOCR --exac
 
 ### PaddleOCR com GPU NVIDIA
 
+Para testar **PaddleOCR-VL-1.6** na extração de código, use o grupo opcional
+`paddle-vl`, `--engine paddle-vl` e `--preprocess native`.
+Veja [instalação, exemplo e limitações](docs/paddle-vl.md).
+O detector do Explorer permanece com PP-OCRv6.
+
 ```powershell
 uv sync --locked --group paddle-gpu
 uv run --group paddle-gpu python -c "import paddle; print(paddle.version.cuda()); paddle.utils.run_check()"

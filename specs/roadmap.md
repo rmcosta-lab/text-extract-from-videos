@@ -261,5 +261,6 @@ Usage, recovery rules, artifacts and limitations:
   [Explorer segmentation](../docs/explorer-segmentation.md).
 
 ## Future (not scheduled)
-- Local vision-language model.
+- Broader quality evaluation of the optional local PaddleOCR-VL-1.6 extraction
+  engine (`--engine paddle-vl`); integration is experimental, not the default.
 - Broader source-grounded references and evaluation of full-document fidelity.
