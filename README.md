@@ -20,85 +20,81 @@ ausentes e recomendações de captura. A saída inclui `codigo_extraido.txt`,
 > 🔒 **Locked spec.** A especificação canônica completa está em [`specs/`](specs/):
 > [mission](specs/mission.md) · [tech-stack](specs/tech-stack.md) · [roadmap](specs/roadmap.md).
 
-## Instalação
+## Ambiente com uv
 
-### 1. Python 3.13
-
-> ⚠️ **Use Python 3.13.** O PaddleOCR (backend opcional) depende do
-> `paddlepaddle`, que **não publica wheels para Python 3.14+**. Mesmo que você
-> use só o Tesseract, recomendamos o 3.13 para manter o ambiente compatível com
-> o engine `paddle`.
-
-```bash
-# macOS
-brew install python@3.13
-
-# Windows: baixe o instalador do Python 3.13 em https://www.python.org/downloads/
-# e marque "Add python.exe to PATH" durante a instalação.
-```
-
-### 2. Dependências de sistema (ffmpeg + tesseract)
-
-Estas ferramentas **não** são instaladas pelo `pip` — precisam do gerenciador de
-pacotes do sistema:
-
-```bash
-# macOS (Homebrew)
-brew install ffmpeg tesseract
-```
+Use Python **3.13**. O `uv` cria a `.venv` a partir de `pyproject.toml` e
+`uv.lock`, sem precisar ativar o ambiente. Instalação do uv:
+<https://docs.astral.sh/uv/getting-started/installation/>.
 
 ```powershell
-# Windows (Chocolatey, em PowerShell como Administrador)
-choco install ffmpeg tesseract
+uv sync --locked
+uv run python extract_code_from_video.py --help
 ```
 
-No Windows, se o `tesseract` não ficar no `PATH`, adicione a pasta de instalação
-(ex.: `C:\Program Files\Tesseract-OCR`) às variáveis de ambiente, ou use o
-instalador da UB Mannheim: <https://github.com/UB-Mannheim/tesseract/wiki>.
+Reutilize o `ffmpeg`/`ffprobe` já instalado, disponível no `PATH`.
+O executável Tesseract só é necessário para o engine `tesseract` (padrão).
+Se necessário, instale com `winget install --id UB-Mannheim.TesseractOCR --exact`.
 
-### 3. Ambiente virtual e pacotes Python
-
-```bash
-# macOS / Linux
-python3.13 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
+### PaddleOCR com GPU NVIDIA
 
 ```powershell
-# Windows (PowerShell)
-py -3.13 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+uv sync --locked --group paddle-gpu
+uv run --group paddle-gpu python -c "import paddle; print(paddle.version.cuda()); paddle.utils.run_check()"
+uv run --group paddle-gpu python suggest_crop.py --video example/IMG_1128.MOV --engine paddle --sample-count 3
 ```
 
-### 4. (Opcional) PaddleOCR
+O grupo `paddle-gpu` instala PaddleOCR e `paddlepaddle-gpu==3.2.2` pelo índice
+oficial `https://www.paddlepaddle.org.cn/packages/stable/cu129/`.
+Destinado a Windows/Linux x64 com GPU NVIDIA e driver compatível, não macOS.
+Não instale `paddlepaddle` CPU junto com a variante GPU. Continue usando
+`--group paddle-gpu` nos próximos `uv sync` para manter o backend instalado.
+Na primeira execução, o PaddleOCR baixa modelos em `~/.paddlex`; depois
+reutiliza o cache local. Os vídeos são processados localmente.
 
-O OCR padrão é o Tesseract. Para usar o engine `paddle`, instale o backend
-opcional:
+Se houver erro de certificado na rede, acrescente `--system-certs` ao comando
+`uv sync`, ou defina `$env:UV_SYSTEM_CERTS = "true"` no PowerShell.
 
-```bash
-python -m pip install paddleocr paddlepaddle
+### Testes com IMG_1128.MOV
+
+Mantenha o vídeo em `example/IMG_1128.MOV`. Ele é ignorado pelo Git pelo tamanho.
+Os testes de amostragem e preview usam esse arquivo; sem ele, são pulados.
+
+```powershell
+uv run pytest
+uv run ruff check .
+uv run mypy
+# Integração com PaddleOCR (falha se o engine solicitado não estiver disponível):
+$env:TEST_OCR_ENGINE = "paddle"
+uv run --group paddle-gpu pytest
+Remove-Item Env:TEST_OCR_ENGINE
+# Extração curta para validar o pipeline:
+uv run --group paddle-gpu python extract_code_from_video.py --video example/IMG_1128.MOV --output saida/IMG_1128-smoke --engine paddle --start-time 2 --end-time 4
 ```
 
-> ⚠️ **No macOS o PaddleOCR roda apenas em CPU** — o `paddlepaddle` não oferece
-> aceleração CUDA no macOS (não há suporte a GPU NVIDIA nesta plataforma). Não
-> instale `paddlepaddle-gpu` no Mac. Em Windows/Linux com GPU NVIDIA é possível
-> usar a variante CUDA, mas a CPU é suficiente para esta ferramenta.
+Para processar o vídeo inteiro, remova `--start-time` e `--end-time`.
+Revise o crop no preview e confira o texto extraído com o vídeo original.
+
+`requirements.txt` é uma exportação de compatibilidade; altere dependências
+com `uv add` e regenere a exportação:
+
+```powershell
+uv export --locked --no-dev --format requirements-txt --output-file requirements.txt
+```
 
 ## Exemplo de comando de execução
 
+Nos exemplos abaixo, acrescente `--group paddle-gpu` depois de `uv run` e
+`--engine paddle` às opções para usar a GPU em vez do Tesseract.
+
 ```bash
-python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/
+uv run python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/
 ```
 
 Com crop, para recortar bordas do editor (barra lateral, abas, minimap) antes
 do OCR — valores em pixels a partir de cada borda:
 
 ```bash
-python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \
+uv run python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \
   --crop-left 60 --crop-top 40 --crop-right 20 --crop-bottom 30
 ```
 
@@ -107,15 +103,15 @@ do arquivo. Os formatos aceitos são segundos (`12.5`), `MM:SS(.mmm)` ou
 `HH:MM:SS(.mmm)`:
 
 ```bash
-python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \
+uv run python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \
   --start-time 00:00:10 --end-time 00:00:25.500
 ```
 
 O OCR padrão é o Tesseract. Depois de instalar o backend opcional (ver
-[Instalação → PaddleOCR](#4-opcional-paddleocr)), selecione o engine `paddle`:
+[PaddleOCR com GPU](#paddleocr-com-gpu-nvidia)), selecione o engine `paddle`:
 
 ```bash
-python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \
+uv run --group paddle-gpu python extract_code_from_video.py --video caminho/do/video.mp4 --output saida/ \
   --engine paddle
 ```
 
@@ -133,7 +129,7 @@ mostra um frame de referência antes e depois do crop e quais frames
 informaram a sugestão:
 
 ```bash
-python suggest_crop.py --video sample-video/IMG_5430.MOV
+uv run python suggest_crop.py --video example/IMG_1128.MOV
 ```
 
 Para restringir a análise a um trecho do vídeo, use `--start-time` e
@@ -141,7 +137,7 @@ Para restringir a análise a um trecho do vídeo, use `--start-time` e
 ou `HH:MM:SS(.mmm)`); apenas frames dentro do intervalo são amostrados:
 
 ```bash
-python suggest_crop.py --video sample-video/IMG_5430.MOV \
+uv run python suggest_crop.py --video example/IMG_1128.MOV \
   --start-time 00:00:10 --end-time 00:00:25.500
 ```
 
@@ -196,3 +192,30 @@ inteiro com crop zero e avisa — ela nunca inventa uma região. Opções:
 8. **Saídas** — o código reconstruído vai para `codigo_extraido.txt`, ao lado
    de `relatorio_falhas.md`, `ocr_raw.csv`, `metadata_video.json`,
    `extraction_parameters.json` e `frames_usados/`.
+
+## Avaliação e próximas melhorias
+
+A preparação com uv também corrigiu dois problemas reproduzidos no Windows:
+metadados ignorando a rotação do MOV (crop validado nas dimensões erradas) e
+setas Unicode nos logs causando falha em consoles CP1252.
+
+Prioridades para as próximas alterações:
+
+1. **Medir fidelidade do OCR.** Criar uma transcrição manual de alguns frames
+   de `IMG_1128.MOV` e comparar texto, indentação e numeração. O teste de
+   execução confirma o pipeline, mas não a correção do código reconstruído.
+   No trecho 2–4 s sem crop, o OCR incluiu ruído da interface e produziu erros
+   de caracteres; a contagem de linhas faltantes sozinha não mede qualidade.
+2. **Revisar a proteção do crop direito.** `combine_observations` assume que
+   texto além da coluna de ruído é lixo. Essa hipótese merece exemplos com
+   linhas longas e minimap antes de prometer que nenhum código será cortado.
+3. **Ajustar pré-processamento por engine.** O upscale fixo de 2x transforma
+   este vídeo em frames de 4320×7680, que o PaddleOCR reduz novamente para seu
+   limite de 4000 pixels. Comparar qualidade e tempo com resolução original,
+   crop e limites configuráveis antes de mudar os padrões.
+4. **Separar responsabilidades.** Extrair metadados, engines OCR,
+   reconstrução e relatórios do script principal para módulos menores,
+   mantendo os testes das funções e as duas interfaces de comando.
+5. **Automatizar validação.** CI com `uv sync --locked`, Ruff, mypy e testes
+   unitários; integração GPU em execução separada, com vídeo local e métricas
+   de qualidade. Evitar depender do MOV de 818 MB para testes unitários.

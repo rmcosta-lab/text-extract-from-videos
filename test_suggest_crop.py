@@ -1,12 +1,13 @@
 """Tests for the crop-suggestion preview tool (`suggest_crop.py`).
 
 Unit tests exercise the heuristic with a fake OCR engine on synthetic frames;
-API tests run the FastAPI app against `sample-video/IMG_5430.MOV` and are
+API tests run the FastAPI app against `example/IMG_1128.MOV` and are
 skipped cleanly when the video or the Tesseract backend is unavailable.
 """
 
 import base64
 import math
+import os
 import struct
 from pathlib import Path
 
@@ -39,7 +40,7 @@ from suggest_crop import (
     suggest_crop,
 )
 
-SAMPLE_VIDEO = Path(__file__).resolve().parent / "sample-video" / "IMG_5430.MOV"
+SAMPLE_VIDEO = Path(__file__).resolve().parent / "example" / "IMG_1128.MOV"
 
 
 class FakeEngine:
@@ -220,6 +221,10 @@ def test_read_sampled_frames_respects_the_time_window() -> None:
         pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
     metadata = get_video_metadata(SAMPLE_VIDEO)
     samples = read_sampled_frames(SAMPLE_VIDEO, 3, start_time="2", end_time="4")
+    assert all(
+        (frame.width, frame.height) == (metadata.width, metadata.height)
+        for frame in samples.frames
+    )
     indices = [frame.frame_index for frame in samples.frames]
     assert indices == sorted(indices)
     assert indices[0] >= math.floor(2 * metadata.fps)
@@ -375,8 +380,11 @@ def client() -> TestClient:
     if not SAMPLE_VIDEO.is_file():
         pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
     try:
-        app = create_app(SAMPLE_VIDEO, EngineName.tesseract, sample_count=3)
+        engine = EngineName(os.environ.get("TEST_OCR_ENGINE", "tesseract"))
+        app = create_app(SAMPLE_VIDEO, engine, sample_count=3)
     except OCREngineUnavailableError as exc:
+        if "TEST_OCR_ENGINE" in os.environ:
+            raise
         pytest.skip(f"tesseract unavailable: {exc}")
     return TestClient(app)
 

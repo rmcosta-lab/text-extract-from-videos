@@ -1,7 +1,41 @@
-# Quality-gate configuration for the phase workflow ("a phase is not done
-# until ruff, mypy, and a real script run pass" — specs/tech-stack.md).
-# Tool config only: the project is two script entrypoints, not an installable
-# package; dependencies live in requirements.txt.
+[project]
+name = "text-extract-from-videos"
+version = "0.1.0"
+description = "Local OCR reconstruction of source code from screen recordings"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "opencv-contrib-python>=4.10,<5",
+    "numpy>=2,<3",
+    "pillow>=11,<13",
+    "pandas>=2.2,<3",
+    "rich>=13,<15",
+    "rapidfuzz>=3,<4",
+    "scikit-image>=0.25,<0.27",
+    "pytesseract>=0.3.13,<0.4",
+    "typer>=0.15,<1",
+    "pydantic>=2,<3",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.11,<1", "mypy>=1.15,<2"]
+paddle-gpu = [
+    "paddleocr>=3.3,<4",
+    "paddlepaddle-gpu==3.2.2; sys_platform == 'win32' or sys_platform == 'linux'",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+paddlepaddle-gpu = { index = "paddle-cu129" }
+
+[[tool.uv.index]]
+name = "paddle-cu129"
+url = "https://www.paddlepaddle.org.cn/packages/stable/cu129/"
+explicit = true
 
 [tool.ruff]
 target-version = "py313"
@@ -23,6 +57,7 @@ ignore = [
     "PLR0912", # too many branches
     "PLR0915", # too many statements
     "PLR0913", # too many arguments — typer CLIs and pydantic seams need them
+    "PLR0917", # same exception for positional CLI/model arguments
     "PLR2004", # magic values — thresholds/geometry literals are documented inline
 ]
 allowed-confusables = ["×"] # dimension strings such as "3840×2160"
@@ -35,6 +70,10 @@ disallow_incomplete_defs = true
 check_untyped_defs = true
 no_implicit_optional = true
 warn_redundant_casts = true
+
+[[tool.mypy.overrides]]
+module = "paddleocr.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["."]

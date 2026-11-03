@@ -154,7 +154,7 @@ def require_cv2() -> Any:
     except ImportError:
         fail(
             "OpenCV is required to read video frames and preprocess images. "
-            "Install it with [bold]python -m pip install opencv-python[/bold], "
+            "Install it with [bold]uv sync[/bold], "
             "then re-run."
         )
     return cv2
@@ -167,7 +167,7 @@ def _require_pandas() -> Any:
     except ImportError:
         fail(
             "pandas is required to write ocr_raw.csv. Install it with "
-            "[bold]python -m pip install pandas[/bold], then re-run."
+            "[bold]uv sync[/bold], then re-run."
         )
     return pd
 
@@ -181,7 +181,7 @@ def _require_structural_similarity() -> Any:
     except ImportError:
         fail(
             "scikit-image is required for near-duplicate frame detection. "
-            "Install it with [bold]python -m pip install scikit-image[/bold], "
+            "Install it with [bold]uv sync[/bold], "
             "then re-run."
         )
     return structural_similarity
@@ -382,6 +382,8 @@ def _metadata_from_ffprobe(video: Path) -> VideoMetadata | None:
         "stream=codec_name,width,height,avg_frame_rate,r_frame_rate,nb_frames,duration",
         "-show_entries",
         "format=duration",
+        "-show_entries",
+        "stream_side_data=rotation:stream_tags=rotate",
         "-of",
         "json",
         str(video),
@@ -418,6 +420,15 @@ def _metadata_from_ffprobe(video: Path) -> VideoMetadata | None:
     try:
         width = int(stream.get("width"))
         height = int(stream.get("height"))
+        # OpenCV applies the display rotation when decoding. Validate crop
+        # against those displayed dimensions, not the encoded raster.
+        rotation = stream.get("tags", {}).get("rotate", 0)
+        for side_data in stream.get("side_data_list", []):
+            if "rotation" in side_data:
+                rotation = side_data["rotation"]
+                break
+        if round(float(rotation)) % 180 == 90:
+            width, height = height, width
         duration = float(
             stream.get("duration") or payload.get("format", {}).get("duration") or 0
         )
@@ -790,7 +801,7 @@ def _require_pytesseract() -> Any:
     except ImportError as exc:
         raise OCREngineUnavailableError(
             "the pytesseract Python package is not installed. Install it with "
-            "[bold]python -m pip install pytesseract[/bold], then re-run."
+            "[bold]uv sync[/bold], then re-run."
         ) from exc
     return pytesseract
 
@@ -973,7 +984,7 @@ def _require_paddleocr() -> Any:
     except ImportError as exc:
         raise OCREngineUnavailableError(
             "the paddleocr Python package is not installed. Install it with "
-            "[bold]python -m pip install paddleocr paddlepaddle[/bold], then "
+            "[bold]uv sync --group paddle-gpu[/bold], then "
             "re-run."
         ) from exc
     return PaddleOCR
@@ -1090,8 +1101,8 @@ class PaddleOCREngine:
         except Exception as exc:
             raise OCREngineUnavailableError(
                 f"PaddleOCR failed to initialize ({exc}). Ensure paddlepaddle "
-                "is installed ([bold]python -m pip install paddleocr "
-                "paddlepaddle[/bold]) and its models are available locally, "
+                "is installed ([bold]uv sync --group paddle-gpu[/bold]) "
+                "and its models are available locally, "
                 "then re-run."
             ) from exc
 
@@ -2393,7 +2404,7 @@ def main(
         else parameters.last_candidate_frame
     )
     console.print(
-        f"[green]Segment:[/green] frames {first_label}→{last_label} "
+        f"[green]Segment:[/green] frames {first_label}->{last_label} "
         "on the original video timeline"
     )
     write_metadata(metadata, output)
@@ -2508,7 +2519,7 @@ def main(
     console.print(
         f"[green]Report:[/green] {len(missing)} missing lines, "
         f"{uncertain} uncertain, {len(report.unextractable)} unextractable "
-        f"spans → [cyan]{output / 'relatorio_falhas.md'}[/cyan]"
+        f"spans -> [cyan]{output / 'relatorio_falhas.md'}[/cyan]"
     )
     non_empty = sum(1 for row in rows if row.text)
     console.print(

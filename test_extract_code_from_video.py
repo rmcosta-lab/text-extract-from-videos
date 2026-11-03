@@ -7,6 +7,8 @@ logic, which is exercised with small synthetic frames and skipped when
 OpenCV / scikit-image are unavailable.
 """
 
+import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +30,7 @@ from extract_code_from_video import (
     _best_read,
     _candidate_frame_window,
     _format_time,
+    _metadata_from_ffprobe,
     _missing_line_entries,
     _parse_timestamp,
     _reconstruct_words,
@@ -45,6 +48,34 @@ from extract_code_from_video import (
 )
 
 # --- fixtures ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("rotation", [-90, 90, 180, 0])
+def test_metadata_matches_rotated_decoder_dimensions(
+    monkeypatch: pytest.MonkeyPatch, rotation: int
+) -> None:
+    payload = {
+        "streams": [
+            {
+                "width": 3840,
+                "height": 2160,
+                "avg_frame_rate": "60/1",
+                "duration": "10",
+                "nb_frames": "600",
+                "codec_name": "hevc",
+                "side_data_list": [{"rotation": rotation}],
+            }
+        ]
+    }
+
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args[0], 0, json.dumps(payload))
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    metadata = _metadata_from_ffprobe(Path("rotated.mov"))
+    assert metadata is not None
+    expected = (2160, 3840) if abs(rotation) == 90 else (3840, 2160)
+    assert (metadata.width, metadata.height) == expected
 
 
 def _read(

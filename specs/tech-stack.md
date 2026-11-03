@@ -1,13 +1,16 @@
 # Tech Stack
 
-Locked technology decisions for the project. The dependency list and install
-steps in [`README.md`](../README.md) are the source of truth; this document
+Locked technology decisions for the project. Dependencies are declared in
+[`pyproject.toml`](../pyproject.toml), with installation steps in
+[`README.md`](../README.md); this document
 records the *choices among alternatives* and the *conventions* that bind future
 work.
 
 ## Language & runtime
 
-- **Python 3** in a local virtualenv (`.venv`).
+- **Python 3.13** in a local virtualenv (`.venv`) managed by **uv**.
+- Dependencies are declared in `pyproject.toml` and locked in `uv.lock`.
+- Tooling is in the `dev` group; NVIDIA OCR is in `paddle-gpu`.
 - Runs entirely offline; no network calls at runtime.
 
 ## CLI & data modeling
@@ -27,10 +30,10 @@ OCR is accessed through a **narrow engine interface** (e.g. a `Protocol` /
 abstract base with a single `image -> OCR result` method). This is a hard
 requirement, not an aspiration.
 
-- **Default (and only current) implementation: `pytesseract`** (Tesseract).
-- **PaddleOCR** is a documented *future* backend that must be addable by writing
-  one new implementation of the interface — no changes to the pipeline that
-  calls it.
+- **Default implementation: `pytesseract`** (Tesseract).
+- **PaddleOCR** is an optional implemented backend. The `paddle-gpu` group
+  installs NVIDIA support from the official CUDA 12.9 index. Model downloads
+  require network access on first use; cached models are reused locally.
 - The rest of the pipeline depends only on the interface, never on `pytesseract`
   directly.
 
@@ -38,7 +41,7 @@ requirement, not an aspiration.
 
 - **`ffprobe`** (via the `ffmpeg` install) is the primary source for metadata:
   FPS, duration, resolution, total frames, codec.
-- **OpenCV (`opencv-python`)** is the fallback for FPS / frame count /
+- **OpenCV (`opencv-contrib-python`)** is the fallback for FPS / frame count /
   resolution and is the reader for pulling individual frames.
 
 ## Image processing
