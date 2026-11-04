@@ -11,6 +11,15 @@ original. Use uma nova pasta para descobrir referências com PP-OCRv6.
 lacunas incertas. Uma árvore alterada pode ficar incerta mesmo com o Explorer
 visível; esses trechos não devem entrar nos clipes de ausência.
 
+Rolagem do código também pode elevar a semelhança com a árvore e produzir
+falsas lacunas. Nesse caso, calibre `absent_threshold` no perfil com exemplos
+do próprio vídeo, mantendo as verificações do título e da âncora. Não resolva
+isso juntando toda lacuna curta: uma aparição real pode ter a mesma duração.
+No IMG_5885, entre 682,031 e 718,923 s, a rolagem chegou a 0,366, acima do
+limite original de 0,25. O perfil revisado usa 0,40; essa calibração é específica
+do vídeo, não um novo limite global. Recorte o intervalo do original para
+recuperar também os frames anteriormente descartados.
+
 ### Intervalos inteiros (opcional)
 
 Com `--interval-mode continuous --max-clip-seconds 0`, o resultado é

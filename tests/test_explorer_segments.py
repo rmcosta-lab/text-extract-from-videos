@@ -215,6 +215,23 @@ def test_cli_help_does_not_depend_on_ocr_or_openai() -> None:
     assert "calibrate" in result.output and "split" in result.output
 
 
+def test_calibrated_absence_keeps_scroll_but_excludes_explorer(tmp_path: Path) -> None:
+    model = detector(tmp_path)
+    model.profile.absent_threshold = 0.4
+    # IMG_5885: scrolling code reached 0.366; visible changed trees exceeded 0.64.
+    scores = [0.20] * 15 + [0.366] * 15 + [0.22] * 15 + [0.65] * 15
+    observations = [
+        observation(i, model.state_from_scores(score, 0.96, 0.72))
+        for i, score in enumerate(scores)
+    ]
+    result = summarize(observations, max_clip_seconds=0)
+    assert len(result["clips"]) == 1
+    assert result["clips"][0]["end"] == 4.4
+    # A title match or lost application anchor must still prevent absence.
+    assert model.state_from_scores(0.36, 0.96, 0.96) == "uncertain"
+    assert model.state_from_scores(0.36, 0.50, 0.72) == "uncertain"
+
+
 def test_continuous_intervals_include_unknown_until_confirmed_reappearance() -> None:
     states = (
         ["present"] * 4
