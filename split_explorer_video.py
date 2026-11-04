@@ -11,6 +11,7 @@ import cv2
 import typer
 
 from explorer_segments.detection import Profile, Region, TemplateDetector
+from explorer_segments.file_identity import clip_filename, identify_clips
 from explorer_segments.media import VideoReader, executable, export_clip, probe
 from explorer_segments.timeline import scan, summarize
 
@@ -24,6 +25,7 @@ def automatic_split(
     scan_fps: Annotated[float, typer.Option(min=0, max=240)] = 4,
     interval_mode: Literal["continuous", "strict"] = "strict",
     discovery_samples: Annotated[int, typer.Option(min=4, max=1000)] = 32,
+    identify_files: bool = True,
     model_root: Path | None = None,
     device: str = "gpu:0",
     analyze_only: bool = False,
@@ -56,6 +58,9 @@ def automatic_split(
             max_clip_seconds=max_clip_seconds,
             ffmpeg=ffmpeg,
             ffprobe=ffprobe,
+            identify_files=identify_files,
+            model_root=model_root,
+            device=device,
         )
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         detail = (
@@ -78,6 +83,43 @@ def region(value: str) -> Region:
     if len(numbers) != 4:
         raise ValueError("Region requires x,y,width,height normalized to 0..1")
     return Region(x=numbers[0], y=numbers[1], width=numbers[2], height=numbers[3])
+
+
+@app.command("identify")
+def identify_saved_segments(
+    report: Annotated[Path, typer.Option()],
+    output: Annotated[Path, typer.Option()],
+    model_root: Path | None = None,
+    device: str = "gpu:0",
+) -> None:
+    """Enrich an existing analysis with editor filenames, without changing cuts."""
+    from explorer_segments.automatic import LocalOCR  # noqa: PLC0415
+
+    try:
+        if output.exists():
+            raise ValueError("Output exists; choose a new JSON file")
+        analysis = json.loads(report.read_text(encoding="utf-8"))
+        if analysis.get("schema_version") != 1:
+            raise ValueError("Unsupported analysis schema")
+        video = Path(analysis["video"])
+        if (video.stat().st_size, video.stat().st_mtime_ns) != (
+            analysis["video_size"],
+            analysis["video_mtime_ns"],
+        ):
+            raise ValueError("Source video changed since analysis")
+        identify_clips(
+            video, analysis["clips"], LocalOCR(model_root, device), typer.echo
+        )
+        for clip in analysis["clips"]:
+            clip["status"] = "planned"
+        analysis["status"] = "analyzed"
+        analysis["identity_source_report"] = str(report.resolve())
+        output.parent.mkdir(parents=True, exist_ok=True)
+        save_json(output, analysis)
+        typer.echo(f"Identified clips saved in {output}")
+    except (OSError, ValueError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
 
 
 @app.command()
@@ -133,19 +175,30 @@ def export_segments(
                 raise ValueError("Invalid segment in analysis")
         output.mkdir(parents=True)
         exported: dict[str, Any] = {
+            "schema_version": 1,
+            "video": str(video.resolve()),
+            "video_size": analysis["video_size"],
+            "video_mtime_ns": analysis["video_mtime_ns"],
             "analysis": str(report.resolve()),
             "encoder": encoder,
             "analysis_sha256": hashlib.sha256(report.read_bytes()).hexdigest(),
-            "clips": [],
+            "clips": [
+                {
+                    **c,
+                    "file": clip_filename(i, c.get("source_file")),
+                    "status": "planned",
+                }
+                for i, c in enumerate(analysis["clips"], 1)
+            ],
         }
         save_json(output / "export.json", exported)
-        for index, clip in enumerate(analysis["clips"], 1):
-            filename = f"clip_{index:03d}.mp4"
+        for clip in exported["clips"]:
+            filename = clip["file"]
             typer.echo(f"Exporting {filename}: {clip['start']:.3f}..{clip['end']:.3f}s")
             export_clip(
                 video, output / filename, clip["start"], clip["end"], binary, encoder
             )
-            exported["clips"].append({**clip, "file": filename, "status": "exported"})
+            clip["status"] = "exported"
             save_json(output / "export.json", exported)
         typer.echo(f"Exported {len(exported['clips'])} clips in {output}")
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
@@ -224,6 +277,9 @@ def split(
     encoder: Literal["libx264", "h264_nvenc"] = "libx264",
     ffmpeg: Path | None = None,
     ffprobe: Path | None = None,
+    identify_files: bool = True,
+    model_root: Path | None = None,
+    device: str = "gpu:0",
 ) -> None:
     """Detect transitions and export continuous intervals or strict absent runs.
 
@@ -275,6 +331,12 @@ def split(
             reader.close()
         for index, clip in enumerate(result["clips"], 1):
             clip.update(file=f"clip_{index:03d}.mp4", status="planned")
+        if identify_files and result["clips"]:
+            from explorer_segments.automatic import LocalOCR  # noqa: PLC0415
+
+            identify_clips(
+                video, result["clips"], LocalOCR(model_root, device), typer.echo
+            )
         result.update(
             schema_version=1,
             video=str(video.resolve()),
@@ -294,6 +356,7 @@ def split(
                 "max_clip_seconds": max_clip_seconds,
                 "margin_seconds": margin_seconds,
                 "encoder": encoder,
+                "identify_files": identify_files,
             },
             observations=[o.model_dump() for o in observations],
             coverage="every_frame"

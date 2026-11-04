@@ -44,6 +44,43 @@ modelos PaddleOCR já instalados localmente, sem downloads durante a execução.
 
 ## Uso automático — sem referências nem regiões manuais
 
+### Nome do arquivo e pastas do editor
+
+Por padrão, `auto` e `split` leem a aba e os breadcrumbs com OCR local em três
+momentos de cada clipe (15%, 50% e 85%). Duas leituras concordantes e nenhuma
+leitura de nome diferente confirmam o nome. Exemplo:
+`spark_ai > core > __init__.py` gera `__init__.py__clip_001.mp4`.
+O índice evita colisões entre arquivos homônimos e trechos do mesmo arquivo.
+
+`segments.json` reúne todos os clipes da análise. Cada item contém `file`,
+`start`, `end`, `duration`, `status` e `source_file`, com:
+
+- `filename`: nome lido no editor;
+- `visible_path` e `folders`: caminho relativo visível e suas pastas;
+- `status` e `path_status`: confirmação, conflito ou indisponibilidade;
+- `evidence`: timestamps, leituras e caixas OCR das amostras.
+
+O caminho é apenas o trecho exibido nos breadcrumbs, não um caminho absoluto
+nem uma reconstrução da árvore inteira. Trechos ilegíveis recebem `null` e
+mantêm `clip_001.mp4`. Leituras conflitantes também mantêm um nome neutro;
+a amostragem não garante detectar toda troca de arquivo dentro do clipe.
+`--no-identify-files` desativa esta etapa e permite `split` sem PaddleOCR.
+Use `--model-root` e `--device` para configurar os modelos locais.
+
+Para identificar uma análise existente sem refazer os cortes:
+
+```powershell
+uv run --group paddle-gpu python split_explorer_video.py identify --report saida/IMG_5885-explorer/strict/segments.json --output saida/IMG_5885-explorer/identified.json
+uv run python split_explorer_video.py export --report saida/IMG_5885-explorer/identified.json --output saida/IMG_5885-explorer/named-clips --encoder h264_nvenc
+```
+
+`identify` não renomeia os vídeos antigos: prepara nomes para a nova exportação.
+`export` preserva os metadados e grava um único `export.json` com a identificação
+do vídeo original e todos os clipes, incluindo o estado de cada exportação.
+Relatórios antigos sem `source_file` continuam usando nomes numéricos.
+
+### Execução
+
 ```powershell
 uv run --group paddle-gpu python split_explorer_video.py auto --video example/IMG_5886.MOV --output saida/explorer-5886-auto --scan-fps 2 --analyze-only
 uv run python split_explorer_video.py export --report saida/explorer-5886-auto/analysis/segments.json --output saida/explorer-5886-auto/clips --encoder h264_nvenc
