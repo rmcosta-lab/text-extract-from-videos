@@ -108,6 +108,10 @@ Se houver erro de certificado na rede, acrescente `--system-certs` ao comando
 
 ### Testes com IMG_1128.MOV
 
+Os testes automatizados ficam em `tests/`, e os arquivos de referência em
+`tests/fixtures/`. Execute a suíte a partir da raiz com `uv run pytest`; para
+um arquivo específico, use `uv run pytest tests/test_suggest_crop.py`.
+
 Mantenha o vídeo em `example/IMG_1128.MOV`. Ele é ignorado pelo Git pelo tamanho.
 Os testes de amostragem e preview usam esse arquivo; sem ele, são pulados.
 

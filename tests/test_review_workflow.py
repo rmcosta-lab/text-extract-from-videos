@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from review_ocr import app
-from test_review import fixture_manifest, result
+from tests.test_review import fixture_manifest, result
 from video_ocr.review import ReviewResult, request_review
 from video_ocr.review_plan import plan_review, select_frames
 from video_ocr.review_quality import ReviewReference, ReviewReferenceLine, score_review

@@ -7,7 +7,7 @@ import cv2
 import pytest
 
 from explorer_segments.automatic import LocalOCR, TextBox, discover, locate_panel
-from test_explorer_segments import synthetic_frame
+from tests.test_explorer_segments import synthetic_frame
 
 
 def tree_boxes() -> list[TextBox]:
@@ -80,7 +80,7 @@ def test_automatic_discovery_when_video_starts_without_explorer(
 
 def test_title_guard_does_not_claim_absence_when_tree_changes(tmp_path: Path) -> None:
     from explorer_segments.detection import Profile, TemplateDetector  # noqa: PLC0415
-    from test_explorer_segments import detector  # noqa: PLC0415
+    from tests.test_explorer_segments import detector  # noqa: PLC0415
 
     original = detector(tmp_path)
     profile: Profile = original.profile.model_copy(

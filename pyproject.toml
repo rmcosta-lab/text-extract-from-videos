@@ -72,7 +72,7 @@ allowed-confusables = ["×"] # dimension strings such as "3840×2160"
 
 [tool.mypy]
 python_version = "3.13"
-files = ["video_ocr", "explorer_segments", "extract_code_from_video.py", "suggest_crop.py", "evaluate_ocr.py", "evaluate_review.py", "review_ocr.py", "split_explorer_video.py", "test_*.py"]
+files = ["video_ocr", "explorer_segments", "extract_code_from_video.py", "suggest_crop.py", "evaluate_ocr.py", "evaluate_review.py", "review_ocr.py", "split_explorer_video.py", "tests"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
@@ -84,7 +84,8 @@ module = "paddleocr.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["."]
+testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-q"
 markers = [
     "integration: needs a local video and optionally an OCR runtime",

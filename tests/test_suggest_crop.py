@@ -44,7 +44,7 @@ from suggest_crop import (
     suggest_crop,
 )
 
-SAMPLE_VIDEO = Path(__file__).resolve().parent / "example" / "IMG_1128.MOV"
+SAMPLE_VIDEO = Path(__file__).resolve().parents[1] / "example" / "IMG_1128.MOV"
 
 
 class FakeEngine:

@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 import pytest
 
-from test_blur_retry import parameters
+from tests.test_blur_retry import parameters
 from video_ocr.models import CropBox, OCRResult
 from video_ocr.pipeline import run_ocr
 from video_ocr.stability import StableFrameSelector, stable_pair
