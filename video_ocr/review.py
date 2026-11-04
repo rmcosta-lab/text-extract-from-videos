@@ -340,6 +340,7 @@ def save_review(
         output / "revisao.json",
         output / "line_mapping.json",
         output / "relatorio_revisao.md",
+        output / "relatorio_revisao_pendencias.md",
     ]
     if any(path.exists() for path in paths):
         raise ValueError("Review output exists; select a new --output directory")
@@ -362,6 +363,12 @@ def save_review(
         atomic_text(stage / "comparativo.diff", diff)
         atomic_json(stage / "line_mapping.json", mapping)
         atomic_text(stage / "relatorio_revisao.md", report)
+        atomic_text(
+            stage / "relatorio_revisao_pendencias.md",
+            render_report(
+                original, review, audit, mapping, output, extraction, pending_only=True
+            ),
+        )
         atomic_json(
             stage / "revisao.json",
             {
@@ -372,7 +379,14 @@ def save_review(
         )
         published: list[Path] = []
         try:
-            for destination in [paths[0], paths[1], paths[3], paths[4], paths[2]]:
+            for destination in [
+                paths[0],
+                paths[1],
+                paths[3],
+                paths[4],
+                paths[5],
+                paths[2],
+            ]:
                 if destination.exists():
                     raise ValueError(
                         "Review output exists; select a new --output directory"

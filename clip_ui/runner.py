@@ -1,4 +1,4 @@
-"""Sequential jobs with observable stages and managed local subprocesses."""
+"""Bounded parallel clip jobs with observable stages and managed local subprocesses."""
 
 import os
 import re
@@ -73,6 +73,7 @@ class BatchJob(BaseModel):
     action: str
     clips: list[ClipJob]
     done: bool = False
+    concurrency: int = 3
 
 
 def stop_process(process: subprocess.Popen[str]) -> None:
@@ -136,6 +137,7 @@ class JobManager:
             )
             job = BatchJob(
                 action=request.action,
+                concurrency=request.concurrency,
                 clips=[
                     ClipJob(
                         settings=clip.model_copy(deep=True),
@@ -215,7 +217,10 @@ class JobManager:
     def _execute(self, args: list[str], clip: ClipJob) -> int:
         process = self._spawn(args, clip)
         code = process.wait()
-        self.process_readers.pop(process.pid).join(timeout=2)
+        with self.lock:
+            reader = self.process_readers.pop(process.pid, None)
+        if reader is not None:
+            reader.join(timeout=2)
         with self.lock:
             self.processes.remove(process)
         return code
@@ -273,82 +278,13 @@ class JobManager:
     def _run(self, job: BatchJob) -> None:
         try:
             self._close_previews()
-            for clip in job.clips:
-                failed = False
-                for stage in clip.stages:
-                    with self.lock:
-                        if failed or self.stop.is_set():
-                            stage.state = "blocked"
-                            stage.error = "Etapa anterior falhou ou servidor encerrado."
-                            continue
-                        stage.state = "running"
-                    try:
-                        if stage.name in {"crop", "extract"}:
-                            validate_video(
-                                clip.settings, crop_preview=stage.name == "crop"
-                            )
-                        if stage.name == "review":
-                            self.log(
-                                clip, "Validando manifesto e evidências localmente…"
-                            )
-                            code = self._execute(
-                                [*command(clip.settings, "review"), "--dry-run"], clip
-                            )
-                            if code:
-                                raise ValueError(
-                                    "Revisão bloqueada: verifique "
-                                    "manifesto/evidências e os logs."
-                                )
-                        code = (
-                            self._crop(clip)
-                            if stage.name == "crop"
-                            else self._execute(command(clip.settings, stage.name), clip)
-                        )
-                        with self.lock:
-                            stage.exit_code = code
-                            stage.state = "succeeded" if code == 0 else "failed"
-                            if code:
-                                stage.error = (
-                                    f"Processo terminou com código {code}; "
-                                    "consulte os logs."
-                                )
-                                if stage.name == "review":
-                                    recent = "\n".join(clip.logs[-30:]).lower()
-                                    if "apitimeouterror" in recent:
-                                        stage.error = (
-                                            "Tempo limite da API excedido; "
-                                            "consulte os logs."
-                                        )
-                                    elif "incomplete" in recent:
-                                        stage.error = (
-                                            "Resposta incompleta; "
-                                            "alterações não aplicadas."
-                                        )
-                                    elif "openai request failed" in recent:
-                                        stage.error = (
-                                            "Falha na API de revisão; consulte os logs."
-                                        )
-                        failed = code != 0
-                    except (Exception, typer.Exit) as exc:
-                        failed = True
-                        error = safe_log(str(exc) or type(exc).__name__)
-                        self.log(clip, error)
-                        with self.lock:
-                            stage.state = "failed"
-                            stage.error = error
-                    finally:
-                        if stage.name == "review":
-                            with self.lock:
-                                for step in clip.review_steps:
-                                    if step.state == "running":
-                                        step.state = (
-                                            "completed"
-                                            if stage.state == "succeeded"
-                                            else "failed"
-                                        )
-                                        step.duration_seconds = max(
-                                            0, time.time() - step.started_at
-                                        )
+            with ThreadPoolExecutor(
+                max_workers=min(job.concurrency, len(job.clips)),
+                thread_name_prefix="clip-worker",
+            ) as workers:
+                futures = [workers.submit(self._run_clip, clip) for clip in job.clips]
+                for future in futures:
+                    future.result()
         finally:
             with self.lock:
                 for clip in job.clips:
@@ -358,6 +294,76 @@ class JobManager:
                             stage.error = "Execução encerrada antes da conclusão."
                 job.done = True
 
+    def _run_clip(self, clip: ClipJob) -> None:
+        failed = False
+        for stage in clip.stages:
+            with self.lock:
+                if failed or self.stop.is_set():
+                    stage.state = "blocked"
+                    stage.error = "Etapa anterior falhou ou servidor encerrado."
+                    continue
+                stage.state = "running"
+            try:
+                if stage.name in {"crop", "extract"}:
+                    validate_video(clip.settings, crop_preview=stage.name == "crop")
+                if stage.name == "review":
+                    self.log(clip, "Validando manifesto e evidências localmente…")
+                    code = self._execute(
+                        [*command(clip.settings, "review"), "--dry-run"], clip
+                    )
+                    if code:
+                        raise ValueError(
+                            "Revisão bloqueada: verifique "
+                            "manifesto/evidências e os logs."
+                        )
+                code = (
+                    self._crop(clip)
+                    if stage.name == "crop"
+                    else self._execute(command(clip.settings, stage.name), clip)
+                )
+                with self.lock:
+                    stage.exit_code = code
+                    stage.state = "succeeded" if code == 0 else "failed"
+                    if code:
+                        stage.error = (
+                            f"Processo terminou com código {code}; consulte os logs."
+                        )
+                        if stage.name == "review":
+                            recent = "\n".join(clip.logs[-30:]).lower()
+                            if "apitimeouterror" in recent:
+                                stage.error = (
+                                    "Tempo limite da API excedido; consulte os logs."
+                                )
+                            elif "incomplete" in recent:
+                                stage.error = (
+                                    "Resposta incompleta; alterações não aplicadas."
+                                )
+                            elif "openai request failed" in recent:
+                                stage.error = (
+                                    "Falha na API de revisão; consulte os logs."
+                                )
+                failed = code != 0
+            except (Exception, typer.Exit) as exc:
+                failed = True
+                error = safe_log(str(exc) or type(exc).__name__)
+                self.log(clip, error)
+                with self.lock:
+                    stage.state = "failed"
+                    stage.error = error
+            finally:
+                if stage.name == "review":
+                    with self.lock:
+                        for step in clip.review_steps:
+                            if step.state == "running":
+                                step.state = (
+                                    "completed"
+                                    if stage.state == "succeeded"
+                                    else "failed"
+                                )
+                                step.duration_seconds = max(
+                                    0, time.time() - step.started_at
+                                )
+
     def close(self) -> None:
         with self.lock:
             self.stop.set()
@@ -365,5 +371,14 @@ class JobManager:
         for process in processes:
             stop_process(process)
         self.pool.shutdown(wait=True, cancel_futures=True)
+        with self.lock:
+            for job in self.jobs:
+                if not job.done:
+                    for clip in job.clips:
+                        for stage in clip.stages:
+                            if stage.state == "pending":
+                                stage.state = "blocked"
+                                stage.error = "Servidor encerrado."
+                    job.done = True
         for reader in self.readers:
             reader.join(timeout=2)

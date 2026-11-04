@@ -203,10 +203,21 @@ def test_block_boundaries_and_preflight(tmp_path: Path) -> None:
         plan_review(manifest, config(max_frames=0))
 
 
-def test_mapping_and_report_links(tmp_path: Path) -> None:
+@pytest.mark.parametrize("with_issues", [False, True])
+def test_mapping_and_report_links(tmp_path: Path, with_issues: bool) -> None:
     manifest = fixture_manifest(tmp_path)
     original, extension, blocks, plan = plan_review(manifest, config())
     output = tmp_path / "run"
+    suggestion = result(after="x = 1\nprint(x)")
+    if with_issues:
+        suggestion = ReviewResult.model_validate(
+            {
+                **suggestion.model_dump(),
+                "unresolved": [
+                    {"line": 1, "reason": "Ambiguous <value>", "frames": [210]}
+                ],
+            }
+        )
     run_review(
         tmp_path,
         output,
@@ -214,12 +225,25 @@ def test_mapping_and_report_links(tmp_path: Path) -> None:
         extension,
         blocks,
         plan,
-        lambda: FakeClient([response(result(after="x = 1\nprint(x)"))]),
+        lambda: FakeClient([response(suggestion)]),
     )
     mapping = read_json(output / "line_mapping.json")
     assert mapping[0]["revised"] == [1, 2]
     assert mapping[0]["kind"] == "replacement"
+    pending_path = output / "relatorio_revisao_pendencias.md"
+    pending = pending_path.read_text(encoding="utf-8")
+    assert "## Alterações" not in pending
+    assert "## Configuração e consumo" not in pending
+    if with_issues:
+        assert "Ambiguous &lt;value&gt;" in pending
+        assert "revisado 1-2" in pending
+        assert "../frame.png" in pending
+        assert "1: x = l" in pending
+    else:
+        assert "Nenhuma pendência declarada" in pending
+    pending_path.unlink()
     report_only(tmp_path, output)
+    assert pending_path.read_text(encoding="utf-8") == pending
     assert "../frame.png" in (output / "relatorio_revisao.md").read_text(
         encoding="utf-8"
     )

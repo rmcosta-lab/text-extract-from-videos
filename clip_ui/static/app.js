@@ -45,6 +45,7 @@ function updateSelection() {
   $("select-all").indeterminate = selected.length > 0 && selected.length < state.clips.length;
   $("run").disabled = !selected.length || state.busy || state.submitting;
   $("suggest").disabled = !state.active || state.busy || state.submitting;
+  $("concurrency").disabled = state.busy || state.submitting;
   $("crop-reference").textContent = state.active ? `Vídeo de referência: ${state.active.name}. A sugestão usa o início e o fim definidos nos ajustes desse clip.` : "Escolha um clip na lista para testar o recorte.";
   renderCropStatus();
   $("run").textContent = state.busy ? "Fila em execução…" : "Iniciar seleção";
@@ -120,7 +121,9 @@ async function submit(action) {
   try {
     const chosen = action === "crop" ? [state.active] : state.clips.filter(c => c.selected);
     const clips = chosen.map(c => {const s = settings(c); if(action === "crop") s.engine = $("crop-engine").value; return s;});
-    await api("/api/jobs", {action,clips});
+    const concurrency = action === "crop" ? 1 : Number($("concurrency").value);
+    if(!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 500) throw new Error("Vídeos simultâneos deve ser um inteiro entre 1 e 500.");
+    await api("/api/jobs", {action,clips,concurrency});
     if(cropVideo) state.cropSubmission = null;
     state.busy = true; await poll();
   } catch(err) {

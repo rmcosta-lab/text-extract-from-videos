@@ -68,6 +68,8 @@ def render_report(
     mapping: list[dict[str, Any]],
     output: Path,
     extraction: Path | None,
+    *,
+    pending_only: bool = False,
 ) -> str:
     frames: dict[int, str] = {}
     if extraction is not None:
@@ -134,7 +136,18 @@ def render_report(
         "## Alterações",
         "",
     ]
-    for index, edit in enumerate(sorted(review.edits, key=lambda e: e.start_line), 1):
+    if pending_only:
+        lines = [
+            "# Pendências da revisão",
+            "",
+            f"- Pendências: {len(review.unresolved)}.",
+            "- A numeração original identifica linhas físicas do arquivo OCR.",
+            "- Intervalos revisados não indicam correspondência linha a linha.",
+            "- [Relatório completo](relatorio_revisao.md).",
+            "",
+        ]
+    edits = [] if pending_only else sorted(review.edits, key=lambda e: e.start_line)
+    for index, edit in enumerate(edits, 1):
         lines.extend(
             [
                 f"### {index}. Original {edit.start_line}-{edit.end_line}",
@@ -217,3 +230,9 @@ def report_only(extraction: Path, output: Path) -> None:
     report = render_report(original, review, audit, mapping, output, extraction)
     atomic_json(output / "line_mapping.json", mapping)
     atomic_text(output / "relatorio_revisao.md", report)
+    atomic_text(
+        output / "relatorio_revisao_pendencias.md",
+        render_report(
+            original, review, audit, mapping, output, extraction, pending_only=True
+        ),
+    )

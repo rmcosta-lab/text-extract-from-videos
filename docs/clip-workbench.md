@@ -99,7 +99,15 @@ habilitam esses eventos automaticamente; a saída normal dos comandos CLI não m
 Após atualizar o código Python, aguarde a fila terminar e reinicie a bancada para
 ativar o acompanhamento. Execuções anteriores não ganham tempos retroativamente.
 
-- A fila é sequencial e aceita um lote por vez. Uma falha bloqueia a revisão
+- A fila aceita um lote por vez e executa até **Vídeos simultâneos** clips em
+  paralelo (padrão 3; inteiro de 1 a 500, limitado ao total selecionado). Use 1
+  para execução sequencial ou, por exemplo, 5 para ampliar o paralelismo.
+  Cada clip mantém extração → revisão em ordem, com arquivos e logs próprios.
+  Quando um clip termina, o próximo ocupa a vaga. O valor é registrado no lote
+  como `concurrency` e também pode ser enviado em `POST /api/jobs`.
+  Mais processos carregam mais instâncias do modelo na GPU; ajuste conforme
+  a VRAM disponível. Reinicie a bancada após atualizar o código, com a fila parada.
+  Uma falha bloqueia a revisão
   dependente daquele clip, mesmo que existam arquivos antigos; os demais seguem.
 - O preview é encerrado ao iniciar outra operação, liberando os recursos. Não
   inicie o lote antes de copiar os parâmetros desejados. Fechar a aba não encerra

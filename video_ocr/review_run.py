@@ -40,6 +40,7 @@ def check_destination(output: Path, extension: OutputExtension) -> None:
             "revisao.json",
             "line_mapping.json",
             "relatorio_revisao.md",
+            "relatorio_revisao_pendencias.md",
         )
     ):
         raise ValueError("Review output exists; select a new --output directory")

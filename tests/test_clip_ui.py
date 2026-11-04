@@ -209,6 +209,112 @@ def test_queue_modes(
         manager.close()
 
 
+@pytest.mark.parametrize("concurrency", [1, 3, 5])
+def test_parallel_clips_obey_limit_and_stage_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, concurrency: int
+) -> None:
+    manager = JobManager()
+    release = threading.Event()
+    full = threading.Event()
+    guard = threading.Lock()
+    active = 0
+    peak = 0
+    calls: dict[str, list[str]] = {}
+
+    def execute(args: list[str], job: ClipJob) -> int:
+        nonlocal active, peak
+        stage = (
+            "dry-run"
+            if "--dry-run" in args
+            else "review"
+            if "review_ocr.py" in args[2]
+            else "extract"
+        )
+        with guard:
+            calls.setdefault(job.id, []).append(stage)
+            active += 1
+            peak = max(peak, active)
+            if active == concurrency:
+                full.set()
+        try:
+            assert release.wait(5), "Parallel workers did not start"
+            manager.log(job, job.id)
+            return 0
+        finally:
+            with guard:
+                active -= 1
+
+    monkeypatch.setattr("clip_ui.runner.validate_video", lambda *a, **kw: None)
+    monkeypatch.setattr(manager, "_execute", execute)
+    try:
+        manager.submit(
+            BatchRequest(
+                action="combined",
+                concurrency=concurrency,
+                clips=[clip(tmp_path, f"video_{i}.mp4") for i in range(7)],
+            )
+        )
+        assert full.wait(5)
+        with guard:
+            assert active == concurrency
+            assert len(calls) == concurrency
+        assert not manager.jobs[0].done
+        assert manager.snapshot()[0]["concurrency"] == concurrency
+        release.set()
+        wait_done(manager)
+        assert peak == concurrency
+        assert len(calls) == 7
+        for job in manager.jobs[0].clips:
+            assert calls[job.id] == ["extract", "dry-run", "review"]
+            assert [entry for entry in job.logs if entry in calls] == [job.id] * 3
+            assert all(s.state == "succeeded" for s in job.stages)
+    finally:
+        release.set()
+        manager.close()
+
+
+def test_parallel_shutdown_blocks_waiting_clips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = JobManager()
+    entered = threading.Barrier(4)
+    calls: list[str] = []
+
+    def execute(args: list[str], job: ClipJob) -> int:
+        with manager.lock:
+            calls.append(job.id)
+        entered.wait(timeout=5)
+        assert manager.stop.wait(5)
+        return 1
+
+    monkeypatch.setattr("clip_ui.runner.validate_video", lambda *a, **kw: None)
+    monkeypatch.setattr(manager, "_execute", execute)
+    try:
+        manager.submit(
+            BatchRequest(
+                action="combined",
+                concurrency=3,
+                clips=[clip(tmp_path, f"video_{i}.mp4") for i in range(6)],
+            )
+        )
+        entered.wait(timeout=5)
+    finally:
+        manager.close()
+    assert len(calls) == 3
+    assert manager.jobs[0].done
+    assert all(
+        s.state in {"blocked", "failed"}
+        for job in manager.jobs[0].clips
+        for s in job.stages
+    )
+
+
+@pytest.mark.parametrize("value", [0, -1, 501, 1.5, True, "3"])
+def test_parallel_limit_requires_bounded_integer(tmp_path: Path, value: Any) -> None:
+    with pytest.raises(ValidationError):
+        BatchRequest(action="extract", clips=[clip(tmp_path)], concurrency=value)
+
+
 def test_failed_extraction_blocks_stale_review_but_continues_batch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

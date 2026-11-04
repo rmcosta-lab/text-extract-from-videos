@@ -85,6 +85,7 @@ class BatchRequest(BaseModel):
 
     action: Action
     clips: list[ClipSettings] = Field(min_length=1, max_length=500)
+    concurrency: int = Field(default=3, ge=1, le=500, strict=True)
 
 
 class Destinations(BaseModel):

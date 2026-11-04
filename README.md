@@ -210,6 +210,11 @@ estruturada e `store=False`.
 
 A revisão gera `codigo_revisado.md` (ou a extensão escolhida), `comparativo.diff`
 e `revisao.json`, com justificativas, frames citados, uso de tokens e dúvidas.
+Também gera `relatorio_revisao_pendencias.md`, somente com as pendências,
+localização original/revisada, contexto e links para frames. É criado junto de
+cada revisão, inclusive na regeneração local com `--report-only`, sem chamada
+adicional à API. Se não houver pendências, o arquivo informa isso explicitamente.
+
 Também gera `relatorio_revisao.md`, com alterações e pendências legíveis e links
 para os frames, e `line_mapping.json`, com a correspondência entre linhas originais
 e revisadas. Substituições apontam para intervalos, não equivalências individuais.
