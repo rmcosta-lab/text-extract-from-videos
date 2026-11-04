@@ -1,5 +1,6 @@
 """Cli for local video OCR."""
 
+import json
 from pathlib import Path
 from typing import (
     Annotated,
@@ -7,6 +8,7 @@ from typing import (
 
 import typer
 
+from video_ocr.blur_retry import BlurRetry
 from video_ocr.models import (
     TIMESTAMP_FORMAT_HELP,
     CropBox,
@@ -121,6 +123,10 @@ def main(
         bool,
         typer.Option(help="Save original frames and evidence for later LLM review."),
     ] = False,
+    blur_retry_seconds: Annotated[
+        float,
+        typer.Option(min=0, max=1, help="Forward blur recovery window; zero disables."),
+    ] = 0.25,
 ) -> None:
     """Extract the source code shown in a screen-recording video."""
     if not video.exists():
@@ -157,6 +163,7 @@ def main(
         fail(str(exc))
     segment_end = parameters.effective_end_time or "video_end_unknown"
     parameters.preprocessing = preprocessing
+    parameters.blur_retry_seconds = blur_retry_seconds
     parameters.output_extension = output_extension
     parameters.prepare_review = prepare_review
     metadata = metadata.model_copy(
@@ -210,19 +217,28 @@ def main(
         fail(str(exc))
 
     frames = sample_frames(video, metadata, parameters)
-    rows, stats, outcomes = run_ocr(
-        frames,
-        engine,
-        frames_dir,
-        parameters.expected_candidate_frames,
-        crop,
-        preprocessing,
-        prepare_review,
-    )
+    recovery = BlurRetry(video, metadata.fps, parameters, crop, blur_retry_seconds)
+    try:
+        rows, stats, outcomes = run_ocr(
+            frames,
+            engine,
+            frames_dir,
+            parameters.expected_candidate_frames,
+            crop,
+            preprocessing,
+            prepare_review,
+            blur_retry=recovery if blur_retry_seconds else None,
+        )
+    finally:
+        recovery.close()
+        (output / "blur_recovery.json").write_text(
+            json.dumps(recovery.records, indent=2), encoding="utf-8"
+        )
     console.print(
         f"[green]Selection:[/green] {stats.frames_sampled} frames sampled, "
         f"{stats.frames_kept} kept, {stats.frames_discarded_blurry} discarded "
         f"as blurry, {stats.frames_discarded_duplicate} as near-duplicate"
+        f", {stats.frames_recovered_blurry} recovered from nearby frames"
     )
     if not rows:
         _bail_with_report(

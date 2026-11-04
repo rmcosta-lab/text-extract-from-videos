@@ -1,6 +1,6 @@
 """Pipeline for local video OCR."""
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from PIL import Image
@@ -39,6 +39,7 @@ def run_ocr(
     crop: CropBox,
     preprocessing: PreprocessConfig | None = None,
     prepare_review: bool = False,
+    blur_retry: Callable[[int], tuple[int, float, MatLike] | None] | None = None,
 ) -> tuple[list[OCRRow], SelectionStats, list[FrameOutcome]]:
     """OCR the sampled frames that survive selection.
 
@@ -76,14 +77,21 @@ def run_ocr(
         description="OCR on sampled frames...",
         console=console,
     )
-    for frame_number, time_seconds, image in progress:
+    for candidate in progress:
+        frame_number, time_seconds, image = candidate
         stats.frames_sampled += 1
         gray = _cropped_grayscale(image, crop)
         sharpness = frame_sharpness(gray)
         if is_frame_blurry(sharpness):
-            stats.frames_discarded_blurry += 1
             record_outcome(frame_number, time_seconds, usable=False)
-            continue
+            replacement = blur_retry(frame_number) if blur_retry else None
+            if replacement is None:
+                stats.frames_discarded_blurry += 1
+                continue
+            stats.frames_recovered_blurry += 1
+            frame_number, time_seconds, image = replacement
+            gray = _cropped_grayscale(image, crop)
+            sharpness = frame_sharpness(gray)
         thumbnail = _ssim_thumbnail(gray)
         if last_accepted_thumbnail is not None:
             score = structural_similarity(

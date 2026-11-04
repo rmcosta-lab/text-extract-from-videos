@@ -35,6 +35,29 @@ Reutilize o `ffmpeg`/`ffprobe` já instalado, disponível no `PATH`.
 O executável Tesseract só é necessário para o engine `tesseract` (padrão).
 Se necessário, instale com `winget install --id UB-Mannheim.TesseractOCR --exact`.
 
+### Recuperação de frames desfocados
+
+Quando um candidato reprova no filtro de nitidez, a extração procura o frame
+mais nítido nos próximos **0,25 s**, sem atingir o próximo candidato regular ou
+obrigatório e sem sair do trecho selecionado. Só substitui por um frame que
+também passe no filtro; caso contrário mantém o descarte. A medição usa o crop.
+Empates favorecem o frame mais próximo. Não mistura nem interpola imagens.
+
+Configure `--blur-retry-seconds 0.25` (padrão, máximo 1 s) ou use
+`--blur-retry-seconds 0` para desativar. O custo adicional ocorre nos candidatos
+desfocados, com decodificação local dos vizinhos e sem OCR em cada tentativa.
+
+`blur_recovery.json` registra candidatos examinados, nitidez, motivo e frame
+escolhido. Os arquivos, OCR e evidências de revisão usam o número/tempo reais do
+substituto. O original rejeitado continua registrado como não lido, pois uma
+imagem posterior não comprova que todo seu conteúdo foi recuperado. Tempos usam
+a mesma convenção frame/FPS do pipeline de extração existente.
+
+Isso não detecta todos os artefatos: texto duplicado/sobreposto pode ter alta
+nitidez e passar no filtro. O `frame_0.png` apresentado em `saida/readme` já havia
+passado no filtro com pré-processamento `native`; esta mudança não garante sua
+rejeição. Ela também não modifica resultados já existentes.
+
 ### PaddleOCR com GPU NVIDIA
 
 Para testar **PaddleOCR-VL-1.6** na extração de código, use o grupo opcional

@@ -73,6 +73,7 @@ def write_failure_report(report: FailureReport, output: Path) -> None:
         "## Frames descartados por baixa nitidez",
         "",
         f"- Descartados por baixa nitidez (borrados): {stats.frames_discarded_blurry}",
+        f"- Recuperados usando frame posterior: {stats.frames_recovered_blurry}",
         f"- Descartados como quase duplicados: {stats.frames_discarded_duplicate}",
         "",
         "## Linhas extraídas",

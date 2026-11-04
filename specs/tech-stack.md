@@ -135,6 +135,9 @@ requirement, not an aspiration.
   `is_frame_blurry()`, `run_ocr()`, `parse_code_lines()`, `merge_ocr_results()`,
   `detect_missing_lines()`, `write_outputs()`.
 - No hidden global state; pass typed models between stages.
+- Blur recovery: forward search up to 0.25 s on rejected candidates, bounded by
+  the next sampling candidate and segment end; cropped sharpness, actual frame
+  provenance, and `blur_recovery.json` audit. Disable with `--blur-retry-seconds 0`.
 - Paddle OCR extraction and Explorer discovery now pin PP-OCRv6 medium detection
   and recognition with PaddleOCR 3.7.x; existing discovery artifacts remain historical.
 - Optional extraction engine `paddle-vl`: direct local GPU PaddleOCR-VL-1.6,

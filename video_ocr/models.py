@@ -359,6 +359,7 @@ class ExtractionParameters(BaseModel):
     engine: EngineName = EngineName.tesseract
     output_extension: OutputExtension = OutputExtension.txt
     prepare_review: bool = False
+    blur_retry_seconds: float = Field(default=0.25, ge=0, le=1)
     preprocessing: PreprocessConfig = Field(default_factory=PreprocessConfig)
     requested_start_time: str | None = None
     requested_end_time: str | None = None
@@ -395,6 +396,7 @@ class SelectionStats(BaseModel):
 
     frames_sampled: int = 0
     frames_discarded_blurry: int = 0
+    frames_recovered_blurry: int = 0
     frames_discarded_duplicate: int = 0
 
     @property
