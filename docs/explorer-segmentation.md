@@ -16,8 +16,11 @@ falsas lacunas. Nesse caso, calibre `absent_threshold` no perfil com exemplos
 do próprio vídeo, mantendo as verificações do título e da âncora. Não resolva
 isso juntando toda lacuna curta: uma aparição real pode ter a mesma duração.
 No IMG_5885, entre 682,031 e 718,923 s, a rolagem chegou a 0,366, acima do
-limite original de 0,25. O perfil revisado usa 0,40; essa calibração é específica
-do vídeo, não um novo limite global. Recorte o intervalo do original para
+limite original de 0,25. O perfil principal desse vídeo e novos perfis do modo
+`auto` agora usam `absent_threshold=0.40`. A descoberta ainda exige uma referência
+negativa com score de no máximo 0,25; título e âncora continuam protegendo a
+classificação. Análises já salvas mantêm os parâmetros da execução original.
+Recorte o intervalo do original para
 recuperar também os frames anteriormente descartados.
 
 ### Intervalos inteiros (opcional)
@@ -49,7 +52,7 @@ modelos PaddleOCR já instalados localmente, sem downloads durante a execução.
 Por padrão, `auto` e `split` leem a aba e os breadcrumbs com OCR local em três
 momentos de cada clipe (15%, 50% e 85%). Duas leituras concordantes e nenhuma
 leitura de nome diferente confirmam o nome. Exemplo:
-`spark_ai > core > __init__.py` gera `__init__.py__clip_001.mp4`.
+`spark_ai > core > __init__.py` gera `clip_001____init__.py.mp4`.
 O índice evita colisões entre arquivos homônimos e trechos do mesmo arquivo.
 
 `segments.json` reúne todos os clipes da análise. Cada item contém `file`,
@@ -71,7 +74,28 @@ Para identificar uma análise existente sem refazer os cortes:
 
 ```powershell
 uv run --group paddle-gpu python split_explorer_video.py identify --report saida/IMG_5885-explorer/strict/segments.json --output saida/IMG_5885-explorer/identified.json
-uv run python split_explorer_video.py export --report saida/IMG_5885-explorer/identified.json --output saida/IMG_5885-explorer/named-clips --encoder h264_nvenc
+uv run python split_explorer_video.py export --report saida/IMG_5885-explorer/identified.json --output saida/IMG_5885-explorer/clip --encoder h264_nvenc
+```
+
+No modo `auto`, os MP4 ficam em `clip/`, ao lado de `analysis/`. Em `split`,
+se `--output` terminar em `analysis`, usa a pasta irm? `clip/`; caso contr?rio,
+usa `<output>/clip/`. O relat?rio detalhado informa `clip_directory`.
+Em `export`, `--output` continua sendo a pasta de destino expl?cita dos MP4.
+
+Na pasta dos v?deos, `clips.json` cont?m somente os clipes exportados:
+
+```json
+[
+  {
+    "file": "clip_038__selection.py.mp4",
+    "reading": {
+      "filename": "selection.py",
+      "visible_path": "spark_ai/features/selection.py",
+      "folders": ["spark_ai", "features"],
+      "path_status": "visible_relative"
+    }
+  }
+]
 ```
 
 `identify` não renomeia os vídeos antigos: prepara nomes para a nova exportação.

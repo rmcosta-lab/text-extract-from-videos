@@ -78,7 +78,7 @@ def clip_filename(index: int, identity: dict[str, Any] | None = None) -> str:
         return f"clip_{index:03d}.mp4"
     # Always a basename, even when an edited JSON contains path separators.
     safe = re.sub(r"[^\w.+-]", "_", name).strip(" .")[:100] or "file"
-    return f"{safe}__clip_{index:03d}.mp4"
+    return f"clip_{index:03d}__{safe}.mp4"
 
 
 def identify_clips(

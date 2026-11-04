@@ -75,6 +75,9 @@ def test_automatic_discovery_when_video_starts_without_explorer(
     monkeypatch.setattr("explorer_segments.automatic.VideoReader", Reader)
     profile = discover(tmp_path / "unused.mov", tmp_path / "automatic", OCR())
     assert profile.exists()
+    from explorer_segments.detection import Profile  # noqa: PLC0415
+
+    assert Profile.model_validate_json(profile.read_text()).absent_threshold == 0.4
     assert (profile.parent / "discovery.json").exists()
 
 

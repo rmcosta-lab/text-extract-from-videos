@@ -267,7 +267,7 @@ def discover(
                 anchor_region=anchor,
                 title_region=heading,
                 present_threshold=0.8,
-                absent_threshold=0.25,
+                absent_threshold=0.40,
             )
             TemplateDetector(profile, output)
             path = output / "profile.json"

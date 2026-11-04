@@ -78,6 +78,27 @@ def save_json(path: Path, data: object) -> None:
     temporary.replace(path)
 
 
+def save_clip_index(directory: Path, clips: list[dict[str, Any]]) -> None:
+    """Write only the filenames and agreed readings of successfully exported clips."""
+    keys = ("filename", "visible_path", "folders", "path_status")
+    save_json(
+        directory / "clips.json",
+        [
+            {
+                "file": clip["file"],
+                "reading": {
+                    key: (clip.get("source_file") or {}).get(
+                        key, "unavailable" if key == "path_status" else None
+                    )
+                    for key in keys
+                },
+            }
+            for clip in clips
+            if clip.get("status") == "exported"
+        ],
+    )
+
+
 def region(value: str) -> Region:
     numbers = [float(n) for n in value.split(",")]
     if len(numbers) != 4:
@@ -192,6 +213,7 @@ def export_segments(
             ],
         }
         save_json(output / "export.json", exported)
+        save_clip_index(output, exported["clips"])
         for clip in exported["clips"]:
             filename = clip["file"]
             typer.echo(f"Exporting {filename}: {clip['start']:.3f}..{clip['end']:.3f}s")
@@ -200,6 +222,7 @@ def export_segments(
             )
             clip["status"] = "exported"
             save_json(output / "export.json", exported)
+            save_clip_index(output, exported["clips"])
         typer.echo(f"Exported {len(exported['clips'])} clips in {output}")
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         detail = (
@@ -289,6 +312,11 @@ def split(
     try:
         if output.exists():
             raise ValueError("Output exists; select a new directory")
+        clips_output = (
+            output.parent / "clip" if output.name == "analysis" else output / "clip"
+        )
+        if not analyze_only and clips_output.exists():
+            raise ValueError("Clip output exists; select a new output directory")
         if max_clip_seconds and max_clip_seconds < min_duration:
             raise ValueError("--max-clip-seconds must be zero or >= --min-duration")
         settings = Profile.model_validate_json(profile.read_text(encoding="utf-8"))
@@ -339,6 +367,7 @@ def split(
             )
         result.update(
             schema_version=1,
+            clip_directory=str(clips_output.resolve()),
             video=str(video.resolve()),
             video_size=video.stat().st_size,
             video_mtime_ns=video.stat().st_mtime_ns,
@@ -401,11 +430,13 @@ def split(
         ]
         (output / "report.md").write_text("\n".join(report) + "\n", encoding="utf-8")
         if not analyze_only:
+            clips_output.mkdir(parents=True)
+            save_clip_index(clips_output, result["clips"])
             for clip in result["clips"]:
                 typer.echo(f"Exporting {clip['file']} ({clip['duration']:.2f}s)")
                 export_clip(
                     video,
-                    output / clip["file"],
+                    clips_output / clip["file"],
                     clip["start"],
                     clip["end"],
                     binary,
@@ -413,6 +444,7 @@ def split(
                 )
                 clip["status"] = "exported"
                 save_json(output / "segments.json", result)
+                save_clip_index(clips_output, result["clips"])
             result["status"] = "completed"
             save_json(output / "segments.json", result)
         typer.echo(

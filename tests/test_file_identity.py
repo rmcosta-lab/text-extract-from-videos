@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from explorer_segments.automatic import TextBox
 from explorer_segments.file_identity import clip_filename, identify_clips, parse_header
-from split_explorer_video import app
+from split_explorer_video import app, save_clip_index
 
 
 def box(text: str, x: float = 0, y: float = 0) -> TextBox:
@@ -41,7 +41,7 @@ def test_unknown_paths_tabs_and_code_are_not_invented() -> None:
     )
     assert "/" not in clip_filename(1, {"filename": "../../CON.py"})
     assert "\\" not in clip_filename(1, {"filename": "..\\CON.py"})
-    assert clip_filename(2, {"filename": "__init__.py"}) == "__init__.py__clip_002.mp4"
+    assert clip_filename(2, {"filename": "__init__.py"}) == "clip_002____init__.py.mp4"
 
 
 @pytest.mark.parametrize(
@@ -76,7 +76,7 @@ def test_temporal_consensus(
     identify_clips(Path("video.mov"), clips, OCR())
     assert clips[0]["source_file"]["status"] == expected
     assert clips[0]["file"] == (
-        "main.py__clip_001.mp4" if expected == "confirmed" else "clip_001.mp4"
+        "clip_001__main.py.mp4" if expected == "confirmed" else "clip_001.mp4"
     )
 
 
@@ -123,4 +123,85 @@ def test_export_keeps_identity_and_all_clip_statuses(
     clip = manifest["clips"][0]
     assert clip["source_file"]["visible_path"] == "spark_ai/core/__init__.py"
     assert clip["status"] == "exported"
-    assert (out / "__init__.py__clip_001.mp4").exists()
+    assert (out / "clip_001____init__.py.mp4").exists()
+    assert json.loads((out / "clips.json").read_text()) == [
+        {
+            "file": "clip_001____init__.py.mp4",
+            "reading": {
+                "filename": "__init__.py",
+                "visible_path": "spark_ai/core/__init__.py",
+                "folders": None,
+                "path_status": "unavailable",
+            },
+        }
+    ]
+
+
+def test_clip_index_excludes_pending_clips_and_raw_ocr(tmp_path: Path) -> None:
+    save_clip_index(
+        tmp_path,
+        [
+            {"file": "clip_001.mp4", "status": "exported"},
+            {"file": "clip_002.mp4", "status": "planned"},
+        ],
+    )
+    index = json.loads((tmp_path / "clips.json").read_text())
+    assert len(index) == 1
+    assert set(index[0]) == {"file", "reading"}
+    assert index[0]["reading"]["filename"] is None
+
+
+def test_split_exports_outside_analysis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.test_explorer_segments import detector, observation  # noqa: PLC0415
+
+    model = detector(tmp_path)
+    profile = tmp_path / "profile.json"
+    profile.write_text(model.profile.model_dump_json())
+    video = tmp_path / "source.mov"
+    video.write_bytes(b"video")
+
+    class Reader:
+        def __init__(self, path: Path) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("split_explorer_video.VideoReader", Reader)
+    monkeypatch.setattr("split_explorer_video.executable", lambda *args: "ffmpeg")
+    monkeypatch.setattr(
+        "split_explorer_video.probe", lambda *args: {"format": {"duration": 3}}
+    )
+    monkeypatch.setattr(
+        "split_explorer_video.scan",
+        lambda *args, **kwargs: [observation(i, "absent") for i in range(25)],
+    )
+
+    def export(*args: Any) -> None:
+        args[1].write_bytes(b"clip")
+
+    monkeypatch.setattr("split_explorer_video.export_clip", export)
+    out = tmp_path / "result" / "analysis"
+    result = CliRunner().invoke(
+        app,
+        [
+            "split",
+            "--video",
+            str(video),
+            "--profile",
+            str(profile),
+            "--output",
+            str(out),
+            "--no-identify-files",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert not list(out.glob("*.mp4"))
+    clips = out.parent / "clip"
+    assert (clips / "clip_001.mp4").is_file()
+    assert json.loads((clips / "clips.json").read_text())[0]["file"] == "clip_001.mp4"
+    assert json.loads((out / "segments.json").read_text())["clip_directory"] == str(
+        clips.resolve()
+    )
