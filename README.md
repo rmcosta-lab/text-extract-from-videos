@@ -375,10 +375,10 @@ inteiro com crop zero e avisa — ela nunca inventa uma região. Opções:
 ## Cortes quando o Explorer está oculto
 
 Pipeline **independente, automático e local**: `split_explorer_video.py`.
-O padrão agora mantém intervalos inteiros entre ocultação e reaparecimento:
-`--interval-mode continuous --max-clip-seconds 0`. Lacunas incertas internas
-são incluídas, podendo preservar aparições breves não confirmadas.
-Use `--interval-mode strict` para excluir essas lacunas como antes.
+O padrão é `--interval-mode strict --max-clip-seconds 0`: apenas sequências
+classificadas como ausentes, excluindo lacunas incertas.
+O modo opcional `--interval-mode continuous` inclui lacunas incertas e pode
+manter o Explorer visível quando a árvore não corresponde à referência.
 O modo `auto` usa PaddleOCR local para localizar o Explorer e gerar as referências
 sem pedir tempos ou regiões. OpenCV identifica ocultação/reabertura e refina as
 transições. Não chama OpenAI, não altera o vídeo original e não baixa modelos:

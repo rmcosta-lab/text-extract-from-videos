@@ -5,16 +5,22 @@ Os pesos locais precisam estar no cache antes de executar `auto`. A atualizaçã
 não altera `profile.json`/`discovery.json` antigos: eles descrevem a execução
 original. Use uma nova pasta para descobrir referências com PP-OCRv6.
 
-## Intervalos inteiros (novo padrão)
+## Cortes conservadores (padrão)
 
-`auto` e `split` usam `--interval-mode continuous --max-clip-seconds 0`:
+`auto` e `split` usam `--interval-mode strict --max-clip-seconds 0`, excluindo
+lacunas incertas. Uma árvore alterada pode ficar incerta mesmo com o Explorer
+visível; esses trechos não devem entrar nos clipes de ausência.
+
+### Intervalos inteiros (opcional)
+
+Com `--interval-mode continuous --max-clip-seconds 0`, o resultado é
 um arquivo desde a ausência confirmada até o primeiro frame de reaparecimento
 confirmado (fim exclusivo). Lacunas incertas internas são mantidas, inclusive
 oscilações menores que `--confirm-seconds`. Isso pode incluir aparições breves
 não confirmadas. Sem reaparecimento, termina no último timestamp analisado.
 Sem ausência confirmada, nenhum clipe é gerado.
 
-Use `--interval-mode strict` para excluir lacunas incertas como antes.
+Use o padrão `--interval-mode strict` para excluir lacunas incertas.
 O padrão de duração máxima agora é zero (sem subdivisão); um valor positivo
 em `--max-clip-seconds` continua permitindo dividir intervalos longos.
 

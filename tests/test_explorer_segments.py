@@ -1,5 +1,6 @@
 """Independent local detector, transition boundaries and export contracts."""
 
+import inspect
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ from typer.testing import CliRunner
 from explorer_segments.detection import Observation, Profile, Region, TemplateDetector
 from explorer_segments.media import VideoReader, export_clip
 from explorer_segments.timeline import scan, summarize
-from split_explorer_video import app
+from split_explorer_video import app, automatic_split, split
 
 
 def synthetic_frame(present: bool) -> Any:
@@ -146,6 +147,21 @@ def test_same_absent_state_is_not_merged_across_unknown() -> None:
     )
     assert len(result["clips"]) == 2
     assert result["clips"][0]["end"] < result["clips"][1]["start"]
+
+
+def test_cli_defaults_exclude_uncertain_panel_reappearances() -> None:
+    # An altered Explorer tree may stay uncertain for seconds (IMG_5885).
+    states = ["absent"] * 45 + ["uncertain"] * 30 + ["absent"] * 80
+    for command in (automatic_split, split):
+        mode = inspect.signature(command).parameters["interval_mode"].default
+        result = summarize(
+            [observation(i, s) for i, s in enumerate(states)],
+            interval_mode=mode,
+            max_clip_seconds=0,
+        )
+        assert len(result["clips"]) == 2
+        assert result["clips"][0]["end"] == 4.4
+        assert result["clips"][1]["start"] == 7.5
 
 
 def test_frame_refinement_on_small_local_video(tmp_path: Path) -> None:

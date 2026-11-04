@@ -22,7 +22,7 @@ def automatic_split(
     video: Annotated[Path, typer.Option()],
     output: Annotated[Path, typer.Option()],
     scan_fps: Annotated[float, typer.Option(min=0, max=240)] = 4,
-    interval_mode: Literal["continuous", "strict"] = "continuous",
+    interval_mode: Literal["continuous", "strict"] = "strict",
     discovery_samples: Annotated[int, typer.Option(min=4, max=1000)] = 32,
     model_root: Path | None = None,
     device: str = "gpu:0",
@@ -215,7 +215,7 @@ def split(
     profile: Annotated[Path, typer.Option()],
     output: Annotated[Path, typer.Option()],
     scan_fps: Annotated[float, typer.Option(min=0, max=240)] = 4,
-    interval_mode: Literal["continuous", "strict"] = "continuous",
+    interval_mode: Literal["continuous", "strict"] = "strict",
     confirm_seconds: Annotated[float, typer.Option(min=0)] = 0.15,
     min_duration: Annotated[float, typer.Option(min=0.01)] = 1,
     max_clip_seconds: Annotated[float, typer.Option(min=0)] = 0,
@@ -310,7 +310,12 @@ def split(
             "# Explorer: transições e cortes",
             "",
             "Detecção local calibrada por referências. Scores não são probabilidades.",
-            "Frames ambíguos são excluídos. Confira as imagens das transições.",
+            (
+                "Frames ambíguos são excluídos."
+                if interval_mode == "strict"
+                else "Modo contínuo: lacunas incertas e aparições breves são mantidas."
+            ),
+            "Confira as imagens das transições.",
             "",
             f"Cobertura: {result['coverage']}; maior intervalo observado: "
             f"{result['max_observed_gap_seconds']:.6f}s.",
