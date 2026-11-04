@@ -135,6 +135,10 @@ requirement, not an aspiration.
   `is_frame_blurry()`, `run_ocr()`, `parse_code_lines()`, `merge_ocr_results()`,
   `detect_missing_lines()`, `write_outputs()`.
 - No hidden global state; pass typed models between stages.
+- Temporal pre-OCR selection: default 0.5 s forward window, 0.1 s sharp stable
+  sequence (at least three frames), crop-based change fraction and run-anchor
+  comparisons, with actual provenance and `stability_selection.json` audit.
+  Disable via `--stability-window-seconds 0`; static ghosting remains unresolved.
 - Blur recovery: forward search up to 0.25 s on rejected candidates, bounded by
   the next sampling candidate and segment end; cropped sharpness, actual frame
   provenance, and `blur_recovery.json` audit. Disable with `--blur-retry-seconds 0`.

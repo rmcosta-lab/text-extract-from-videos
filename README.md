@@ -37,6 +37,30 @@ Se necessário, instale com `winget install --id UB-Mannheim.TesseractOCR --exac
 
 ### Recuperação de frames desfocados
 
+Antes do OCR, a extração agora também verifica estabilidade temporal, inclusive
+em candidatos nítidos. `--stability-window-seconds 0.5` busca a primeira sequência
+estável de pelo menos 0,1 s (mínimo três frames) e usa seu frame mais nítido.
+O crop é respeitado. A comparação aceita pequenas alterações localizadas, como
+cursor piscando, mas rejeita movimento amplo e compara também com o início da
+sequência para evitar aceitar rolagem lenta acumulada.
+
+Sem confirmação, o candidato é descartado e o processo segue para a próxima
+amostra; não há fallback para a imagem instável. A busca pode atravessar candidatos
+obrigatórios próximos, que são pulados se anteriores ao frame já escolhido, mas
+nunca ultrapassa o fim do trecho. No fim de trechos curtos pode faltar tempo para
+confirmar estabilidade. Números de frame e horários do substituto são preservados.
+
+`stability_selection.json` registra tentativas, sequência confirmada e substituto;
+o relatório informa descartes e substituições. Desative com
+`--stability-window-seconds 0` para manter apenas a recuperação por desfoque abaixo.
+Com estabilidade ativa, ela também exige nitidez; não se usa um frame nítido
+instável como fallback. Há custo adicional de decodificação para cada candidato.
+
+O método é heurístico: tolera até 2% dos pixels com diferença acima de 20/255
+em miniaturas com largura máxima de 640 pixels. Movimento da câmera e mudanças
+de iluminação podem causar rejeições. Sobreposição que permaneça estática pode
+passar: estabilidade não certifica legibilidade nem fidelidade do OCR.
+
 Quando um candidato reprova no filtro de nitidez, a extração procura o frame
 mais nítido nos próximos **0,25 s**, sem atingir o próximo candidato regular ou
 obrigatório e sem sair do trecho selecionado. Só substitui por um frame que

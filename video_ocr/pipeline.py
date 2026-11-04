@@ -40,6 +40,8 @@ def run_ocr(
     preprocessing: PreprocessConfig | None = None,
     prepare_review: bool = False,
     blur_retry: Callable[[int], tuple[int, float, MatLike] | None] | None = None,
+    stability_selector: Callable[[int], tuple[int, float, MatLike] | None]
+    | None = None,
 ) -> tuple[list[OCRRow], SelectionStats, list[FrameOutcome]]:
     """OCR the sampled frames that survive selection.
 
@@ -71,6 +73,7 @@ def run_ocr(
 
     last_accepted_thumbnail: MatLike | None = None
     last_accepted_usable = False
+    last_selected_frame = -1
     progress = track(
         frames,
         total=expected_samples,
@@ -80,6 +83,21 @@ def run_ocr(
     for candidate in progress:
         frame_number, time_seconds, image = candidate
         stats.frames_sampled += 1
+        if stability_selector:
+            if frame_number <= last_selected_frame:
+                stats.frames_skipped_after_replacement += 1
+                record_outcome(frame_number, time_seconds, usable=False)
+                continue
+            selected = stability_selector(frame_number)
+            if selected is None:
+                stats.frames_discarded_unstable += 1
+                record_outcome(frame_number, time_seconds, usable=False)
+                continue
+            if selected[0] != frame_number:
+                stats.frames_replaced_stability += 1
+                record_outcome(frame_number, time_seconds, usable=False)
+            frame_number, time_seconds, image = selected
+            last_selected_frame = frame_number
         gray = _cropped_grayscale(image, crop)
         sharpness = frame_sharpness(gray)
         if is_frame_blurry(sharpness):
@@ -135,4 +153,7 @@ def run_ocr(
                 lines=result.lines,
             )
         )
-    return rows, stats, outcomes
+    # A forward replacement can pass a subsequent forced sampling candidate.
+    unique = {o.frame_number: o for o in outcomes if not o.usable}
+    unique.update({o.frame_number: o for o in outcomes if o.usable})
+    return rows, stats, sorted(unique.values(), key=lambda o: o.frame_number)

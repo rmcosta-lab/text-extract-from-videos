@@ -360,6 +360,7 @@ class ExtractionParameters(BaseModel):
     output_extension: OutputExtension = OutputExtension.txt
     prepare_review: bool = False
     blur_retry_seconds: float = Field(default=0.25, ge=0, le=1)
+    stability_window_seconds: float = Field(default=0.5, ge=0, le=2)
     preprocessing: PreprocessConfig = Field(default_factory=PreprocessConfig)
     requested_start_time: str | None = None
     requested_end_time: str | None = None
@@ -397,6 +398,9 @@ class SelectionStats(BaseModel):
     frames_sampled: int = 0
     frames_discarded_blurry: int = 0
     frames_recovered_blurry: int = 0
+    frames_discarded_unstable: int = 0
+    frames_replaced_stability: int = 0
+    frames_skipped_after_replacement: int = 0
     frames_discarded_duplicate: int = 0
 
     @property
@@ -405,6 +409,8 @@ class SelectionStats(BaseModel):
             self.frames_sampled
             - self.frames_discarded_blurry
             - self.frames_discarded_duplicate
+            - self.frames_discarded_unstable
+            - self.frames_skipped_after_replacement
         )
 
 

@@ -45,6 +45,7 @@ from video_ocr.reports import (
     write_metadata,
     write_outputs,
 )
+from video_ocr.stability import StableFrameSelector
 from video_ocr.video import (
     adaptive_sample_step,
     get_video_metadata,
@@ -127,6 +128,10 @@ def main(
         float,
         typer.Option(min=0, max=1, help="Forward blur recovery window; zero disables."),
     ] = 0.25,
+    stability_window_seconds: Annotated[
+        float,
+        typer.Option(min=0, max=2, help="Temporal stability search; zero disables."),
+    ] = 0.5,
 ) -> None:
     """Extract the source code shown in a screen-recording video."""
     if not video.exists():
@@ -164,6 +169,7 @@ def main(
     segment_end = parameters.effective_end_time or "video_end_unknown"
     parameters.preprocessing = preprocessing
     parameters.blur_retry_seconds = blur_retry_seconds
+    parameters.stability_window_seconds = stability_window_seconds
     parameters.output_extension = output_extension
     parameters.prepare_review = prepare_review
     metadata = metadata.model_copy(
@@ -218,6 +224,9 @@ def main(
 
     frames = sample_frames(video, metadata, parameters)
     recovery = BlurRetry(video, metadata.fps, parameters, crop, blur_retry_seconds)
+    stability = StableFrameSelector(
+        video, metadata.fps, parameters, crop, stability_window_seconds
+    )
     try:
         rows, stats, outcomes = run_ocr(
             frames,
@@ -228,9 +237,14 @@ def main(
             preprocessing,
             prepare_review,
             blur_retry=recovery if blur_retry_seconds else None,
+            stability_selector=stability if stability_window_seconds else None,
         )
     finally:
         recovery.close()
+        stability.close()
+        (output / "stability_selection.json").write_text(
+            json.dumps(stability.records, indent=2), encoding="utf-8"
+        )
         (output / "blur_recovery.json").write_text(
             json.dumps(recovery.records, indent=2), encoding="utf-8"
         )
@@ -239,6 +253,9 @@ def main(
         f"{stats.frames_kept} kept, {stats.frames_discarded_blurry} discarded "
         f"as blurry, {stats.frames_discarded_duplicate} as near-duplicate"
         f", {stats.frames_recovered_blurry} recovered from nearby frames"
+        f", {stats.frames_discarded_unstable} without temporal confirmation"
+        f", {stats.frames_replaced_stability} temporal replacements"
+        f", {stats.frames_skipped_after_replacement} skipped after replacement"
     )
     if not rows:
         _bail_with_report(
