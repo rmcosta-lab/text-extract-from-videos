@@ -260,6 +260,88 @@ Usage, recovery rules, artifacts and limitations:
   uncertainty; duration subdivision is disabled by default. See
   [Explorer segmentation](../docs/explorer-segmentation.md).
 
+## Phase 18 — Local clip workflow UI (CLI compatibility preserved)
+
+Goal: provide a local frontend to discover clips, configure crop suggestions,
+extract code and run visual review, with visible execution progress. All new
+defaults belong to the UI and are passed explicitly to the existing commands;
+existing CLI defaults, flags, output contracts and fidelity rules stay unchanged.
+
+### 18.1 — Folder selection and clip inventory
+- Add a separate local UI entrypoint, following the existing FastAPI + uvicorn,
+  static HTML and vanilla JS stack; bind to `127.0.0.1`.
+- Let the user select a local clips directory, for example
+  `saida/IMG_5885-explorer/clip`, and list all supported video files directly in
+  that directory. Provide a local folder browser and editable path; process files
+  in place, without requiring browser uploads or a `clips.json` manifest.
+- Show filenames, selection controls and per-clip execution status. Support
+  selecting one clip for crop suggestion and multiple clips for processing.
+- Surface empty, missing and inaccessible directories with actionable messages.
+
+### 18.2 — Crop suggestion and per-clip extraction settings
+- Launch the existing `suggest_crop.py` preview for the selected video. Allow
+  optional `--start-time` and `--end-time`, plus a supported OCR engine selector
+  defaulting to `paddle` in the UI.
+- Keep the existing crop preview/edit flow. Provide a field to paste its
+  `--crop-left`, `--crop-top`, `--crop-right`, `--crop-bottom` result into the
+  extraction settings; parse and validate these values rather than executing
+  pasted command text.
+- Keep extraction start/end times optional and editable per clip. Omit unset
+  flags, preserve an explicit start of `0`, and validate windows using the
+  existing timestamp and video-boundary rules.
+- Offer an extraction OCR engine selector defaulting to `paddle`, exposing only
+  engines supported by the corresponding operation. Pass `--prepare-review` by
+  default for extraction runs started from the UI.
+- Infer `--output-extension` from the source-code suffix inside the video name:
+  `clip_006__vector_names.py.mp4` selects `py`. Provide a per-clip dropdown with
+  supported alternatives (`txt`, `md`, `py` today). For absent or unsupported
+  suffixes, show that inference was unavailable and leave an editable `txt`
+  fallback; never send unsupported values to the CLI.
+
+### 18.3 — Batch extraction and review orchestration
+- Let the user choose one of three actions for selected clips: extraction only
+  (`extract_code_from_video.py`), review only (`review_ocr.py`), or extraction
+  followed by review. Run a sequential queue with separate state for each stage
+  and clip, keeping the UI responsive.
+- For a video in `<project>/clip/<video>`, pass `<project>/extract` as extraction
+  `--output`. Preserve the CLI's existing `<video-stem>/extract` nesting:
+  `saida/IMG_5885-explorer/clip/clip_006__vector_names.py.mp4` receives
+  `--output saida/IMG_5885-explorer/extract`, producing
+  `saida/IMG_5885-explorer/extract/clip_006__vector_names.py/extract`.
+  Display the resolved destination before execution; allow an explicit base
+  output directory for other folder layouts.
+- For review, pass the existing extraction directory as `--extraction` and its
+  sibling `revisao` directory as explicit `--output`. For example,
+  `saida/IMG_5885-explorer/extract/clip_006__vector_names.py/extract` maps to
+  `saida/IMG_5885-explorer/extract/clip_006__vector_names.py/revisao`.
+- UI review defaults: `--image-detail original --system-certs
+  --max-output-tokens 64000`. Preserve existing model/credential configuration
+  and make clear that visual review uses the existing paid OpenAI API workflow.
+  OCR engine selection applies to crop suggestion and extraction;
+  `review_ocr.py` has no OCR `--engine` parameter.
+- Review-only uses existing prepared extraction artifacts, validating the
+  manifest and evidence before execution. In the combined action, start review
+  only after that clip's extraction succeeds and its review inputs validate.
+  Mark failed or blocked stages explicitly and keep other clips' results visible.
+
+### 18.4 — Progress and acceptance checks
+- Show queue totals, current clip and stage, pending/running/succeeded/failed/
+  blocked states, and live logs or progress events. Show counts/percentages only
+  where supported by actual execution data; otherwise use indeterminate progress.
+- Display actionable errors and output/report locations per clip. Invoke scripts
+  with structured argument lists, preserving paths with spaces and avoiding shell
+  interpolation. Reuse existing processing logic without duplicating OCR/review.
+- Verify folder discovery, selection, pasted crop parsing, optional time windows,
+  engine defaults, extension inference/override and both output path mappings.
+- Verify all three execution modes, missing review inputs, extraction failure
+  blocking dependent review, and live progress while a batch is running. Use
+  mocked review calls for automated checks, without requiring paid API calls.
+- **Exit criterion:** the example clip folder can be processed through the UI
+  with the requested defaults and sibling extraction/review directories;
+  existing CLI regression checks still pass with unchanged defaults and behavior.
+  Run `ruff`, `mypy`, relevant tests and a local manual UI workflow before marking
+  this phase complete.
+
 ## Future (not scheduled)
 - Detect ghosting/overlaid text that passes the sharpness gate. Forward blur
   recovery is implemented, but is not an artifact detector.

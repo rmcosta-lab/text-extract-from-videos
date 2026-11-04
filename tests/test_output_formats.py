@@ -154,7 +154,7 @@ def test_cli_named_extraction_tree(
         "video_ocr.cli.run_ocr",
         lambda *args, **kwargs: (
             [row],
-            SelectionStats(frames_sampled=1, frames_kept=1),
+            SelectionStats(frames_sampled=1),
             [],
         ),
     )

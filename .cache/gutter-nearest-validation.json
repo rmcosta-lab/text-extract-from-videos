@@ -1,0 +1,58 @@
+[
+  {
+    "clip": "clip_001___init_.py",
+    "frames": 3,
+    "before_lines": 102,
+    "after_lines": 102,
+    "changed_numbers": []
+  },
+  {
+    "clip": "clip_002__columns.py",
+    "frames": 11,
+    "before_lines": 269,
+    "after_lines": 269,
+    "changed_numbers": []
+  },
+  {
+    "clip": "clip_003__cv.py",
+    "frames": 12,
+    "before_lines": 330,
+    "after_lines": 330,
+    "changed_numbers": [
+      271,
+      272
+    ]
+  },
+  {
+    "clip": "clip_004__pipeline_inspect.py",
+    "frames": 31,
+    "before_lines": 798,
+    "after_lines": 798,
+    "changed_numbers": [
+      72,
+      73,
+      227,
+      228,
+      785
+    ],
+    "target_before": {
+      "72": "      - Contêiner de estágios a ser percorrido. Pode ser um pipeline ainda não ajustado ou um modelo já tr",
+      "73": "        Contêiner de estágios a ser percorrido. Pode ser um pipeline ainda não ajustado ou um modelo já tr"
+    },
+    "target_after": {
+      "72": "",
+      "73": "     - Contêiner de estágios a ser percorrido. Pode ser um pipeline ainda não ajustado ou um modelo já tr"
+    },
+    "phrase_before": 2,
+    "phrase_after": 1
+  },
+  {
+    "clip": "clip_006__vector_names.py",
+    "frames": 40,
+    "before_lines": 671,
+    "after_lines": 671,
+    "changed_numbers": [
+      201
+    ]
+  }
+]

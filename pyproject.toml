@@ -47,6 +47,7 @@ explicit = true
 
 [tool.ruff]
 target-version = "py313"
+extend-exclude = [".cache"]
 
 [tool.ruff.lint]
 select = [
@@ -72,7 +73,7 @@ allowed-confusables = ["×"] # dimension strings such as "3840×2160"
 
 [tool.mypy]
 python_version = "3.13"
-files = ["video_ocr", "explorer_segments", "extract_code_from_video.py", "suggest_crop.py", "evaluate_ocr.py", "evaluate_review.py", "review_ocr.py", "split_explorer_video.py", "tests"]
+files = ["video_ocr", "explorer_segments", "clip_ui", "clip_workbench.py", "extract_code_from_video.py", "suggest_crop.py", "evaluate_ocr.py", "evaluate_review.py", "review_ocr.py", "split_explorer_video.py", "tests"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true

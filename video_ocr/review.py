@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from video_ocr.imaging import encode_review_webp
 from video_ocr.models import CropBox, OutputExtension
+from video_ocr.review_progress import phase
 from video_ocr.review_storage import atomic_json, atomic_text
 
 MAX_REVIEW_IMAGE_BYTES = 25_000_000
@@ -242,6 +243,7 @@ def request_review(
     options: dict[str, Any] = {}
     if reasoning_effort:
         options["reasoning"] = {"effort": reasoning_effort}
+    phase("Aguardando resposta do modelo (inclui envio)")
     response = client.responses.create(
         model=model,
         instructions=INSTRUCTIONS,
@@ -258,6 +260,7 @@ def request_review(
         max_output_tokens=max_output_tokens,
         **options,
     )
+    phase("Resposta recebida; registrando retorno")
     record = {
         "schema_version": 1,
         "status": response.status,
@@ -284,6 +287,7 @@ def request_review(
     }
     if on_response is not None:
         on_response(record)
+    phase("Validando resposta e alterações")
     return parse_response_record(record)
 
 

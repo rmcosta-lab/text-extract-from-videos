@@ -13,6 +13,7 @@ from video_ocr.review import (
     save_review,
 )
 from video_ocr.review_plan import ReviewBlock
+from video_ocr.review_progress import phase
 from video_ocr.review_storage import atomic_json, read_json
 
 
@@ -80,6 +81,7 @@ def run_review(
     resume: bool = False,
     reapply: bool = False,
 ) -> ReviewResult:
+    phase("Validando destino e execução", block="")
     check_destination(output, extension)
     state_path = output / "review_run.json"
     if resume or reapply:
@@ -98,6 +100,7 @@ def run_review(
     audits: list[dict[str, Any]] = []
     attempts_audits: list[dict[str, Any]] = []
     for block in blocks:
+        phase("Preparando solicitação", block=f"{block.number}/{len(blocks)}")
         directory = output / "responses" / f"block_{block.number:04d}"
         attempts = sorted(directory.glob("attempt_*.json"))
         review = None
@@ -140,6 +143,7 @@ def run_review(
             state["blocks"][str(block.number)] = {"status": "requesting"}
             atomic_json(state_path, state)
             try:
+                phase("Inicializando cliente e envio")
                 with client_factory() as client:
                     review, response_audit = request_review(
                         client,
@@ -169,6 +173,7 @@ def run_review(
             "response": str(chosen.relative_to(output)) if chosen else None,
         }
         atomic_json(state_path, state)
+    phase("Consolidando e validando alterações", block="")
     combined = ReviewResult(
         summary="\n".join(result.summary for result in results),
         edits=[edit for result in results for edit in result.edits],
@@ -193,6 +198,7 @@ def run_review(
         instructions_sha256=plan["instructions_sha256"],
         configuration_sha256=plan["configuration_sha256"],
     )
+    phase("Salvando código, diff e relatório", block="")
     save_review(output, original, corrected, extension, combined, audit, extraction)
     state["status"] = "completed"
     atomic_json(state_path, state)

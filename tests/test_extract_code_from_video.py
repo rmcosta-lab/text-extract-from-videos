@@ -7,6 +7,7 @@ logic, which is exercised with small synthetic frames and skipped when
 OpenCV / scikit-image are unavailable.
 """
 
+import itertools
 import json
 import subprocess
 from pathlib import Path
@@ -228,6 +229,117 @@ def test_parse_code_lines_pairs_separate_gutter_and_code_boxes() -> None:
 def test_parse_code_lines_unpaired_gutter_yields_empty_content() -> None:
     reads = parse_code_lines([_row([OCRLine(text="12")])])
     assert [(read.line_number, read.content) for read in reads] == [(12, "")]
+
+
+@pytest.mark.parametrize("order", list(itertools.permutations(range(3))))
+@pytest.mark.parametrize("scale", [1, 2])
+def test_gutter_cannot_steal_next_lines_text(
+    order: tuple[int, ...], scale: int
+) -> None:
+    # Actual frame 192 geometry from clip_004: 72 is close enough to pass the
+    # height threshold, but the phrase is much closer to 73 (4.5 vs 36.5 px).
+    boxes = [
+        OCRLine(text="72", left=79, top=2181, width=41, height=33),
+        OCRLine(text="73", left=79, top=2221, width=41, height=35),
+        OCRLine(
+            text="- Contêiner de estágios", left=255, top=2209, width=1671, height=50
+        ),
+    ]
+    scaled = [
+        box.model_copy(
+            update={
+                key: getattr(box, key) * scale
+                for key in ("left", "top", "width", "height")
+            }
+        )
+        for box in boxes
+    ]
+    reads = parse_code_lines([_row([scaled[i] for i in order], frame=192)])
+    assert {r.line_number: r.content for r in reads} == {
+        72: "",
+        73: "- Contêiner de estágios",
+    }
+    # A second frame agreeing on 73 must not create an extra copy under 72.
+    reads += parse_code_lines([_row(boxes, frame=252)])
+    merged = merge_ocr_results(reads)
+    assert sum("Contêiner" in item.read.content for item in merged) == 1
+
+
+def test_equidistant_text_is_preserved_without_guessing_number() -> None:
+    reads = parse_code_lines(
+        [
+            _row(
+                [
+                    OCRLine(text="72", left=0, top=100, width=20, height=20),
+                    OCRLine(text="73", left=0, top=120, width=20, height=20),
+                    OCRLine(text="ambiguous", left=50, top=110, width=100, height=20),
+                ]
+            )
+        ]
+    )
+    assert [(r.line_number, r.content) for r in reads] == [
+        (72, ""),
+        (73, ""),
+        (None, "ambiguous"),
+    ]
+
+
+def test_identical_text_on_distinct_lines_is_not_deduplicated() -> None:
+    reads = parse_code_lines(
+        [
+            _row(
+                [
+                    OCRLine(text="72", left=0, top=100, width=20, height=20),
+                    OCRLine(text="pass", left=50, top=100, width=100, height=20),
+                    OCRLine(text="73", left=0, top=120, width=20, height=20),
+                    OCRLine(text="pass", left=50, top=120, width=100, height=20),
+                ]
+            )
+        ]
+    )
+    assert [(r.line_number, r.content) for r in reads] == [(72, "pass"), (73, "pass")]
+
+
+def test_geometry_takes_priority_over_adjacency_without_geometry() -> None:
+    reads = parse_code_lines(
+        [
+            _row(
+                [
+                    OCRLine(text="72"),
+                    OCRLine(text="actual text", left=50, top=100, width=100, height=20),
+                    OCRLine(text="73", left=0, top=100, width=20, height=20),
+                ]
+            )
+        ]
+    )
+    assert [(r.line_number, r.content) for r in reads] == [
+        (72, ""),
+        (73, "actual text"),
+    ]
+
+
+def test_unambiguous_adjacency_without_boxes_is_retained() -> None:
+    reads = parse_code_lines([_row([OCRLine(text="72"), OCRLine(text="return x")])])
+    assert [(r.line_number, r.content) for r in reads] == [(72, "return x")]
+
+
+def test_ambiguous_adjacency_without_boxes_remains_unassigned() -> None:
+    reads = parse_code_lines(
+        [
+            _row(
+                [
+                    OCRLine(text="72"),
+                    OCRLine(text="return x"),
+                    OCRLine(text="73"),
+                ]
+            )
+        ]
+    )
+    assert [(r.line_number, r.content) for r in reads] == [
+        (72, ""),
+        (None, "return x"),
+        (73, ""),
+    ]
 
 
 def test_parse_code_lines_demotes_isolated_line_number_outliers() -> None:

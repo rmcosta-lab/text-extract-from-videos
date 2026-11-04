@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Bancada de clips</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="masthead"><div class="brand"><span class="mark" aria-hidden="true">[ ▷ ]</span><div><span class="eyebrow">VÍDEO → CÓDIGO</span><h1>Bancada de clips</h1></div></div><span class="local">● Execução local</span></header>
+<main>
+  <section class="source panel" aria-labelledby="source-title">
+    <div class="section-head"><h2 id="source-title">Pasta de trabalho</h2><span id="inventory-count" class="muted">Nenhuma pasta carregada</span></div>
+    <form id="source-form"><label for="folder">Pasta com os vídeos</label><div class="path-row"><input id="folder" placeholder="saida/IMG_5885-explorer/clip" required><button type="button" id="browse">Procurar pasta</button><button class="primary" type="submit">Carregar clips</button></div>
+    <label for="base">Pasta base de saída <span class="muted">· aplicada ao carregar os clips</span></label><input id="base" placeholder="Automático: pasta irmã extract"><p class="hint">Após mudar a pasta ou a base de saída, carregue os clips novamente. Isso reinicia a seleção e os ajustes.</p></form>
+  </section>
+  <div id="message" role="alert" hidden></div>
+  <section class="panel shared-crop" aria-labelledby="shared-crop-title">
+    <div class="section-head"><h2 id="shared-crop-title">Crop compartilhado</h2><span class="muted">Padrão para todos os clips</span></div>
+    <p class="hint">Teste o recorte em um vídeo e use os mesmos parâmetros nos demais. Ajustes individuais têm prioridade.</p>
+    <p id="crop-reference" class="hint">Escolha um clip na lista para testar o recorte.</p>
+    <div class="form-grid"><label>Engine da sugestão<select id="crop-engine"><option value="paddle">PaddleOCR</option><option value="tesseract">Tesseract</option></select></label><button id="suggest" type="button" disabled>Sugerir crop</button></div>
+    <div id="crop-status" class="crop-status" role="status" aria-live="polite" hidden></div>
+    <label for="shared-crop">Cole os parâmetros do preview para todos os clips</label><textarea id="shared-crop" rows="2" placeholder="--crop-left 0 --crop-top 0 --crop-right 0 --crop-bottom 0" aria-describedby="shared-crop-hint"></textarea>
+    <p id="shared-crop-hint" class="hint">Aplicados ao processar os clips sem crop individual. Em branco, não aplica recorte. O padrão é mantido ao carregar outra pasta nesta sessão.</p>
+  </section>
+  <div class="workspace">
+    <section class="panel inventory" aria-labelledby="clips-title"><div class="section-head"><h2 id="clips-title">Clips</h2><span id="selected-count" class="count">0 selecionados</span></div>
+      <div class="selection-bar"><label><input type="checkbox" id="select-all"> Selecionar todos</label><span class="muted">Clique no nome para ajustar</span></div>
+      <div id="clip-list" class="clip-list"><p class="empty">Carregue uma pasta para encontrar seus vídeos.<br>Os arquivos são processados no próprio computador.</p></div>
+    </section>
+    <section class="panel inspector" aria-labelledby="settings-title"><div class="section-head"><h2 id="settings-title">Ajustes do clip</h2><span class="muted">Individual</span></div>
+      <p id="settings-empty" class="empty">Escolha um clip na lista para ajustar o trecho, o crop e a saída.</p>
+      <div id="settings" hidden>
+        <h3 id="clip-name" class="filename"></h3>
+        <div class="form-grid"><label>Início <span class="muted">· opcional</span><input id="start" placeholder="0 ou 00:00:02.500"></label><label>Fim <span class="muted">· opcional</span><input id="end" placeholder="Vídeo completo"></label></div>
+        <p class="hint">Tempos usados na extração e na sugestão de crop. Em branco, usa o vídeo completo.</p>
+        <div class="crop-box"><label for="crop">Cole os parâmetros do preview</label><textarea id="crop" rows="2" placeholder="Em branco, usa o crop compartilhado" aria-describedby="crop-hint"></textarea><p id="crop-hint" class="hint">Opcional: substitui o crop compartilhado apenas neste clip. Apague para voltar ao compartilhado. Para não recortar este vídeo, informe os quatro parâmetros com valor 0.</p></div>
+        <div class="form-grid"><label>Engine da extração<select id="engine"></select></label><label>Extensão de saída<select id="extension"></select></label></div>
+        <p id="inference" class="hint"></p><label class="check-row"><input type="checkbox" id="prepare" checked> Preparar evidências para revisão</label>
+        <div class="destinations"><span class="eyebrow">DESTINOS DESTE CLIP</span><label>Extração<output id="extract-path"></output></label><label>Revisão<output id="review-path"></output></label><p id="overwrite" class="notice" hidden>Já existem resultados neste destino. Uma nova execução pode substituir artefatos da execução anterior.</p></div>
+      </div>
+    </section>
+  </div>
+  <section class="panel execution" aria-labelledby="execution-title"><div><h2 id="execution-title">Processar seleção</h2><p class="hint">Fila sequencial. Cada clip mantém seus próprios ajustes.</p></div><div class="actions"><label for="action" class="sr-only">Operação</label><select id="action"><option value="extract">Extrair código</option><option value="review">Revisar extração existente</option><option value="combined">Extrair + revisar</option></select><button id="run" class="primary" disabled>Iniciar seleção</button></div><p id="review-note" class="notice" hidden>A revisão visual envia texto e imagens à API paga da OpenAI. Usa o modelo e a chave configurados no ambiente. Padrões: imagens originais e até 64.000 tokens de saída.</p><div id="run-preview" class="run-preview"></div></section>
+  <section class="panel monitor" aria-labelledby="monitor-title"><div class="section-head"><h2 id="monitor-title">Acompanhamento</h2><span id="queue-summary" role="status">Nenhuma execução nesta sessão</span></div><div id="jobs"><p class="empty">As etapas, os logs e os caminhos de saída aparecerão aqui durante a execução.</p></div></section>
+  <footer>O texto original e suas incertezas são preservados. A revisão gera uma cópia separada.</footer>
+</main>
+<dialog id="folder-dialog"><form method="dialog"><button class="close" aria-label="Fechar navegador de pastas">×</button></form><h2>Selecionar pasta</h2><p id="browse-path" class="filename"></p><div class="path-row"><button id="parent-folder">↑ Pasta acima</button><button id="use-folder" class="primary">Usar esta pasta</button></div><div id="folder-list"></div></dialog>
+</body></html>

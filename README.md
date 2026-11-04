@@ -20,6 +20,18 @@ ausentes e recomendações de captura. A saída inclui `codigo_extraido.txt`,
 > 🔒 **Locked spec.** A especificação canônica completa está em [`specs/`](specs/):
 > [mission](specs/mission.md) · [tech-stack](specs/tech-stack.md) · [roadmap](specs/roadmap.md).
 
+## Interface local para clips
+
+A [bancada de clips](docs/clip-workbench.md) permite escolher uma pasta, ajustar
+crop/tempos, executar extração e revisão em lote e acompanhar os logs na tela.
+
+```powershell
+uv run --group paddle-gpu --group review --env-file .env.local python clip_workbench.py
+```
+
+Abra <http://127.0.0.1:8770>. Os padrões da interface são independentes dos
+comandos CLI existentes; a revisão visual continua opcional e usa a API paga.
+
 ## Ambiente com uv
 
 Use Python **3.13**. O `uv` cria a `.venv` a partir de `pyproject.toml` e

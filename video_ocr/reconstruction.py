@@ -111,55 +111,89 @@ def _content_from_numbered_line(
     return fallback_content
 
 
+def _gutter_pair_distance(gutter: OCRLine, code: OCRLine) -> float | None:
+    """Distance for a spatially plausible pair; missing geometry is not evidence."""
+    right = _line_right(gutter)
+    if code.left is not None:
+        if right is not None and code.left <= right:
+            return None
+        if gutter.left is not None and code.left <= gutter.left:
+            return None
+    gutter_center = _line_center_y(gutter)
+    code_center = _line_center_y(code)
+    if gutter_center is None or code_center is None:
+        return None
+    distance = abs(code_center - gutter_center)
+    max_height = max(gutter.height or 0, code.height or 0, 12)
+    return distance if distance <= max(8.0, max_height * 0.75) else None
+
+
+def _pair_gutter_lines(
+    lines: list[OCRLine], excluded: set[int] | None = None
+) -> dict[int, int]:
+    """Give each code box to its uniquely nearest eligible gutter first.
+
+    Ownership is decided across the whole frame, before choosing a code box for
+    each gutter. An earlier number cannot consume a later number's closer text.
+    Equidistant boxes stay unpaired rather than choosing by OCR iteration order.
+    With no usable vertical geometry, retain only unambiguous adjacency matches.
+    """
+    gutters = [
+        i
+        for i, line in enumerate(lines)
+        if _number_only_line_number(line.text) is not None
+    ]
+    owned: dict[int, list[tuple[float, int, int, int]]] = {}
+    for index, code in enumerate(lines):
+        if excluded and index in excluded:
+            continue
+        if (
+            not code.text.strip()
+            or _number_only_line_number(code.text) is not None
+            or _split_numbered_text(code.text) is not None
+        ):
+            continue
+        spatial: list[tuple[float, int]] = []
+        adjacent: list[tuple[float, int]] = []
+        for gutter_index in gutters:
+            gutter = lines[gutter_index]
+            right = _line_right(gutter)
+            if code.left is not None and (
+                (right is not None and code.left <= right)
+                or (gutter.left is not None and code.left <= gutter.left)
+            ):
+                continue
+            if _line_center_y(gutter) is None or _line_center_y(code) is None:
+                if abs(index - gutter_index) == 1:
+                    adjacent.append((0.0, gutter_index))
+            else:
+                distance = _gutter_pair_distance(gutter, code)
+                if distance is not None:
+                    spatial.append((distance, gutter_index))
+        candidates = spatial or adjacent
+        if not candidates:
+            continue
+        best_distance = min(distance for distance, _ in candidates)
+        nearest = [g for distance, g in candidates if distance == best_distance]
+        if len(nearest) != 1:
+            continue
+        gutter_index = nearest[0]
+        owned.setdefault(gutter_index, []).append(
+            (
+                best_distance,
+                abs(index - gutter_index),
+                code.left if code.left is not None else 10**9,
+                index,
+            )
+        )
+    return {gutter: min(candidates)[-1] for gutter, candidates in owned.items()}
+
+
 def _find_paired_code_line(
     gutter_index: int, lines: list[OCRLine], paired_code_lines: set[int]
 ) -> int | None:
-    """Find code text OCR'd separately from a gutter-only line number."""
-    gutter = lines[gutter_index]
-    gutter_center = _line_center_y(gutter)
-    gutter_right = _line_right(gutter)
-    candidates: list[tuple[float, int, int, int]] = []
-
-    for index, line in enumerate(lines):
-        if index == gutter_index or index in paired_code_lines:
-            continue
-        if not line.text.strip():
-            continue
-        if _number_only_line_number(line.text) is not None:
-            continue
-        if _split_numbered_text(line.text) is not None:
-            continue
-        if (
-            gutter_right is not None
-            and line.left is not None
-            and line.left <= gutter_right
-        ):
-            continue
-        if (
-            gutter.left is not None
-            and line.left is not None
-            and line.left <= gutter.left
-        ):
-            continue
-
-        line_center = _line_center_y(line)
-        if gutter_center is None or line_center is None:
-            if abs(index - gutter_index) > 1:
-                continue
-            vertical_distance = 0.0
-        else:
-            vertical_distance = abs(line_center - gutter_center)
-            max_height = max(gutter.height or 0, line.height or 0, 12)
-            if vertical_distance > max(8.0, max_height * 0.75):
-                continue
-
-        candidates.append(
-            (vertical_distance, abs(index - gutter_index), line.left or 10**9, index)
-        )
-
-    if not candidates:
-        return None
-    return min(candidates)[-1]
+    """Compatibility helper using the same frame-wide ownership as parsing."""
+    return _pair_gutter_lines(lines, paired_code_lines).get(gutter_index)
 
 
 def _to_line_read(
@@ -240,15 +274,8 @@ def parse_code_lines(
             continue
 
         code_origin = _code_origin_for_frame(frame_lines)
-        paired_code_lines: set[int] = set()
-        gutter_pairs: dict[int, int] = {}
-        for index, line in enumerate(frame_lines):
-            if _number_only_line_number(line.text) is None:
-                continue
-            pair = _find_paired_code_line(index, frame_lines, paired_code_lines)
-            if pair is not None:
-                gutter_pairs[index] = pair
-                paired_code_lines.add(pair)
+        gutter_pairs = _pair_gutter_lines(frame_lines)
+        paired_code_lines = set(gutter_pairs.values())
 
         for index, line in enumerate(frame_lines):
             if index in paired_code_lines:

@@ -84,6 +84,18 @@ requirement, not an aspiration.
   `extract_code_from_video.py` (metadata, frame reading, preprocessing, OCR
   engine construction) rather than duplicating them.
 
+## Local clip workbench (Phase 18)
+
+- Separate `clip_workbench.py` launcher and `clip_ui` settings, runner and API
+  modules. FastAPI serves local HTML/CSS/vanilla JS at `127.0.0.1`.
+- React was evaluated and not selected: per-clip form state plus job polling is
+  small enough to maintain without a new Node/build dependency.
+- Sequential background subprocess queue using the current Python environment,
+  explicit UI-only defaults, typed request/state models and bounded logs.
+  Existing extraction/crop/review entrypoints and defaults remain unchanged.
+- Managed crop preview reuses `suggest_crop.py`; review preflight reuses its
+  existing `--dry-run`. See [workbench usage](../docs/clip-workbench.md).
+
 ## Independent Explorer video segmentation
 
 - `split_explorer_video.py` / `explorer_segments` are separate from OCR/review.

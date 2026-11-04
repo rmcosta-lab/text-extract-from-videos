@@ -7,6 +7,7 @@ from typing import Any
 from video_ocr.models import OCRRow, OutputExtension
 from video_ocr.reconstruction import parse_code_lines
 from video_ocr.review import INSTRUCTIONS, ReviewResult, local_path, prepare_request
+from video_ocr.review_progress import phase
 from video_ocr.review_storage import fingerprint, read_json
 
 
@@ -132,6 +133,10 @@ def plan_review(
     blocks: list[ReviewBlock] = []
     extension = OutputExtension(manifest["parameters"]["output_extension"])
     for start in range(1, len(source) + 1, size):
+        phase(
+            "Preparando evidências",
+            block=f"{len(blocks) + 1}/{(len(source) + size - 1) // size}",
+        )
         end = min(len(source), start + size - 1)
         first = max(1, start - config["context_lines"])
         last = min(len(source), end + config["context_lines"])
