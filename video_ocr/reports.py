@@ -7,6 +7,7 @@ from typing import (
     NoReturn,
 )
 
+from video_ocr.gutter import GutterDecision
 from video_ocr.models import (
     BLURRY_SHARE_WARNING,
     CAPTURE_RECOMMENDATIONS,
@@ -28,6 +29,7 @@ from video_ocr.models import (
 from video_ocr.reconstruction import (
     _missing_line_entries,
     _uncertain_entry,
+    parse_code_lines,
     unextractable_sections,
 )
 
@@ -88,6 +90,10 @@ def write_failure_report(report: FailureReport, output: Path) -> None:
     if report.line_numbers_detected:
         lines.append("- Reconstrução: por número de linha (numeração visível).")
         lines.append(
+            "- Decisões de recuperação/rejeição da numeração: "
+            "`line_number_audit.json` (OCR bruto preservado)."
+        )
+        lines.append(
             "- Leituras sem número de linha detectável (excluídas da "
             "reconstrução numerada; texto bruto preservado em `ocr_raw.csv`): "
             f"{report.reads_without_line_number}"
@@ -99,6 +105,37 @@ def write_failure_report(report: FailureReport, output: Path) -> None:
     if report.lines_extracted == 0:
         lines.append("- Nenhuma linha pôde ser extraída deste vídeo.")
 
+    lines += ["", "## Erros suspeitos de numeração", ""]
+    if report.line_limit.source == "inferred":
+        frames = ", ".join(str(frame) for frame in report.line_limit.frames)
+        lines.append(
+            f"- Maior linha inferida: {report.line_limit.value}; "
+            f"fim visível confirmado nos frames {frames}."
+        )
+    elif report.max_line_number is not None:
+        lines.append(f"- Maior linha informada: {report.max_line_number}.")
+    else:
+        lines.append(
+            "- Maior linha: desconhecida; fim do arquivo sem confirmação visual. "
+            f"Motivo: `{report.line_limit.reason}`."
+        )
+    lines.append(
+        f"- Leituras com numeração rejeitada: {len(report.suspect_line_numbers)}"
+    )
+    reasons = {
+        "above_known_maximum": "acima da maior linha validada",
+        "outside_dominant_frame_sequence": "fora da sequência predominante no frame",
+        "isolated_frame_number": "número isolado no frame",
+    }
+    for suspect in report.suspect_line_numbers:
+        read = suspect.read
+        reason = reasons.get(suspect.reason, suspect.reason)
+        lines.append(
+            f"- Número lido {read.line_number}, frame={read.frame_number}, "
+            f"tempo={read.time_formatted}: {reason}. "
+            "Excluído da reconstrução numerada e do cálculo de lacunas; "
+            "conteúdo preservado no OCR bruto."
+        )
     lines += ["", "## Linhas faltantes", ""]
     if not report.line_numbers_detected:
         lines.append(
@@ -366,6 +403,25 @@ def write_outputs(
     write_metadata(metadata, output)
     write_extraction_parameters(parameters, output)
     write_extracted_code(merged, output, parameters.output_extension)
+    gutter_audit: list[GutterDecision] = []
+    parse_code_lines(
+        rows, gutter_audit=gutter_audit, max_line_number=parameters.max_line_number
+    )
+    _write_text_file(
+        output / "line_number_audit.json",
+        json.dumps(
+            {
+                "version": 1,
+                "decisions": gutter_audit,
+                "max_line_number": parameters.max_line_number,
+                "line_limit": parameters.line_limit.model_dump(),
+                "rejected_reads": [s.model_dump() for s in report.suspect_line_numbers],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+    )
     if parameters.prepare_review:
         write_review_manifest(parameters, rows, merged, output)
     write_failure_report(report, output)

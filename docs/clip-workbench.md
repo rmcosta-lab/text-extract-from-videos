@@ -71,6 +71,21 @@ para recuperação avançada, use `--resume`/`--reapply` pela CLI.
 
 ## Operação local e limites
 
+A extração valida números detectados em caixas separadas na coluna do editor.
+Quando ao menos quatro números próximos sustentam a mesma sequência espacial,
+ela pode recuperar um dígito lido incorretamente (por exemplo, `0` no lugar de
+`9`). A recuperação fica restrita ao intervalo entre referências confiáveis;
+não preenche texto ausente nem extrapola números nas bordas do frame.
+Casos com evidência geométrica conflitante ficam sem número confiável, e o
+número zero nunca participa da reconstrução numerada.
+
+O arquivo `extract/line_number_audit.json` registra o frame, o índice da caixa
+entre as caixas não vazias, a leitura original, o número recuperado (ou `null`),
+o motivo e os números usados como referências. `ocr_raw.csv` e as evidências
+brutas do manifesto continuam intactos. A validação usa as caixas OCR existentes,
+sem chamadas adicionais ao motor OCR. Ela se aplica a novas extrações, tanto na
+bancada quanto na CLI; resultados antigos precisam ser extraídos novamente.
+
 Durante a revisão, o painel **Etapas da revisão** mostra preparação das evidências,
 bloco atual, espera pela resposta, validação e gravação dos arquivos. A etapa
 ativa exibe um contador; as anteriores mantêm sua duração e indicação de conclusão

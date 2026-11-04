@@ -5,6 +5,7 @@ from collections import Counter
 
 from rapidfuzz import fuzz
 
+from video_ocr.gutter import GutterDecision, validate_gutter
 from video_ocr.models import (
     FUZZY_MATCH_THRESHOLD,
     LINE_NUMBER_ONLY_RE,
@@ -25,6 +26,7 @@ from video_ocr.models import (
     OCRLine,
     OCRRow,
     OCRWord,
+    SuspectLineNumber,
     TimeSpan,
 )
 from video_ocr.ocr import (
@@ -215,11 +217,26 @@ def _to_line_read(
     )
 
 
-def _filter_frame_line_number_outliers(reads: list[LineRead]) -> list[LineRead]:
+def _filter_frame_line_number_outliers(
+    reads: list[LineRead],
+    *,
+    max_line_number: int | None = None,
+    suspects: list[SuspectLineNumber] | None = None,
+) -> list[LineRead]:
     """Drop implausible frame-local gutter numbers without guessing a repair."""
     numbered = [read.line_number for read in reads if read.line_number is not None]
-    if len(numbered) < 3:
-        return reads
+    clusters: list[list[int]] = []
+    for number in sorted(set(numbered)):
+        if (
+            not clusters
+            or number - clusters[-1][-1] > MAX_FRAME_LINE_NUMBER_NEIGHBOR_DISTANCE
+        ):
+            clusters.append([])
+        clusters[-1].append(number)
+    dominant = max(clusters, key=len) if clusters else []
+    # A small remote cluster cannot corroborate itself against a strong local
+    # sequence. Balanced/discontinuous regions remain inconclusive.
+    strong_cluster = len(dominant) >= 4 and len(dominant) >= len(set(numbered)) * 0.75
 
     filtered: list[LineRead] = []
     for read in reads:
@@ -227,23 +244,38 @@ def _filter_frame_line_number_outliers(reads: list[LineRead]) -> list[LineRead]:
             filtered.append(read)
             continue
 
+        reason = None
         neighbors = [number for number in numbered if number != read.line_number]
-        if not neighbors:
-            filtered.append(read)
-            continue
-        nearest = min(abs(read.line_number - number) for number in neighbors)
-        if nearest <= MAX_FRAME_LINE_NUMBER_NEIGHBOR_DISTANCE:
+        if max_line_number is not None and read.line_number > max_line_number:
+            reason = "above_known_maximum"
+        elif strong_cluster and read.line_number not in dominant:
+            reason = "outside_dominant_frame_sequence"
+        elif (
+            len(numbered) >= 3
+            and neighbors
+            and min(abs(read.line_number - number) for number in neighbors)
+            > MAX_FRAME_LINE_NUMBER_NEIGHBOR_DISTANCE
+        ):
+            reason = "isolated_frame_number"
+        if reason is None:
             filtered.append(read)
             continue
 
         # Preserve the OCR content and provenance, but do not let one isolated
         # gutter glitch create a fabricated line number or thousands of gaps.
         filtered.append(read.model_copy(update={"line_number": None}))
+        if suspects is not None:
+            suspects.append(SuspectLineNumber(read=read, reason=reason))
     return filtered
 
 
 def parse_code_lines(
-    rows: list[OCRRow], *, strip_line_numbers: bool = True
+    rows: list[OCRRow],
+    *,
+    strip_line_numbers: bool = True,
+    gutter_audit: list[GutterDecision] | None = None,
+    max_line_number: int | None = None,
+    suspects: list[SuspectLineNumber] | None = None,
 ) -> list[LineRead]:
     """Split each frame read into per-line reads, extracting leading line numbers.
 
@@ -257,6 +289,8 @@ def parse_code_lines(
     the unnumbered path so code that merely starts with an integer is not cut.
     """
     reads: list[LineRead] = []
+    if max_line_number is not None and max_line_number < 1:
+        raise ValueError("max_line_number must be positive")
     for row in rows:
         frame_reads: list[LineRead] = []
         frame_lines = [line for line in row.lines if line.text.strip()]
@@ -273,6 +307,9 @@ def parse_code_lines(
             reads.extend(frame_reads)
             continue
 
+        frame_lines, rejected_gutters = validate_gutter(
+            frame_lines, row.frame_number, gutter_audit
+        )
         code_origin = _code_origin_for_frame(frame_lines)
         gutter_pairs = _pair_gutter_lines(frame_lines)
         paired_code_lines = set(gutter_pairs.values())
@@ -285,12 +322,32 @@ def parse_code_lines(
 
             number_only = _number_only_line_number(line.text)
             if number_only is not None:
+                validated_number = (
+                    number_only
+                    if number_only > 0 and index not in rejected_gutters
+                    else None
+                )
+                if (
+                    number_only == 0
+                    and index not in rejected_gutters
+                    and gutter_audit is not None
+                ):
+                    gutter_audit.append(
+                        {
+                            "frame_number": row.frame_number,
+                            "box_index": index,
+                            "original_text": line.text,
+                            "recovered_number": None,
+                            "reason": "invalid_zero_line_number",
+                            "anchor_numbers": [],
+                        }
+                    )
                 paired_index = gutter_pairs.get(index)
                 if paired_index is None:
                     frame_reads.append(
                         _to_line_read(
                             row,
-                            line_number=number_only,
+                            line_number=validated_number,
                             content="",
                             confidence=line.confidence,
                         )
@@ -301,7 +358,7 @@ def parse_code_lines(
                 frame_reads.append(
                     _to_line_read(
                         row,
-                        line_number=number_only,
+                        line_number=validated_number,
                         content=_line_content_from_words(code_line, code_origin),
                         confidence=_mean_confidence(
                             (line.confidence, code_line.confidence)
@@ -311,11 +368,25 @@ def parse_code_lines(
                 continue
 
             split = _split_numbered_text(line.text)
+            line_number: int | None
             if split:
                 line_number, fallback_content = split
                 content = _content_from_numbered_line(
                     line, fallback_content, code_origin
                 )
+                if line_number == 0:
+                    line_number = None
+                    if gutter_audit is not None:
+                        gutter_audit.append(
+                            {
+                                "frame_number": row.frame_number,
+                                "box_index": index,
+                                "original_text": line.text,
+                                "recovered_number": None,
+                                "reason": "invalid_zero_line_number",
+                                "anchor_numbers": [],
+                            }
+                        )
             else:
                 line_number = None
                 content = line.text
@@ -327,7 +398,11 @@ def parse_code_lines(
                     confidence=line.confidence,
                 )
             )
-        reads.extend(_filter_frame_line_number_outliers(frame_reads))
+        reads.extend(
+            _filter_frame_line_number_outliers(
+                frame_reads, max_line_number=max_line_number, suspects=suspects
+            )
+        )
     return reads
 
 

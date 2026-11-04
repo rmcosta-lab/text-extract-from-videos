@@ -73,7 +73,9 @@ def select_frames(
         rows = [OCRRow.model_validate(frame["ocr"]) for frame in manifest["frames"]]
     except (KeyError, ValueError):
         return fallback("Missing OCR observations for alternative coverage")
-    reads = parse_code_lines(rows)
+    reads = parse_code_lines(
+        rows, max_line_number=manifest.get("parameters", {}).get("max_line_number")
+    )
     selected = {int(item["frame_number"]) for item in relevant}
     reasons = {str(i): ["Chosen reconstruction evidence"] for i in selected}
     for item in relevant:

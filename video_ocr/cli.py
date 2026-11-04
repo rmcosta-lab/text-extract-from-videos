@@ -9,17 +9,20 @@ from typing import (
 import typer
 
 from video_ocr.blur_retry import BlurRetry
+from video_ocr.line_limit import infer_line_limit
 from video_ocr.models import (
     TIMESTAMP_FORMAT_HELP,
     CropBox,
     EngineName,
     FailureReport,
     InvalidExtractionParameterError,
+    LineLimitEvidence,
     OCREngineUnavailableError,
     OutputExtension,
     PreprocessConfig,
     PreprocessProfile,
     SelectionStats,
+    SuspectLineNumber,
     app,
     console,
     fail,
@@ -137,6 +140,12 @@ def main(
         float,
         typer.Option(min=0, max=2, help="Temporal stability search; zero disables."),
     ] = 0.5,
+    max_line_number: Annotated[
+        int | None,
+        typer.Option(
+            min=1, help="Known last source line; reject OCR numbers above it."
+        ),
+    ] = None,
 ) -> None:
     """Extract the source code shown in a screen-recording video."""
     if not video.exists():
@@ -185,6 +194,7 @@ def main(
     parameters.output_extension = output_extension
     parameters.output_name = output_name
     parameters.prepare_review = prepare_review
+    parameters.max_line_number = max_line_number
     metadata = metadata.model_copy(
         update={
             "sampling_strategy": (
@@ -288,7 +298,18 @@ def main(
                 "quality."
             ),
         )
-    reads = parse_code_lines(rows)
+    suspects: list[SuspectLineNumber] = []
+    limit = (
+        LineLimitEvidence(
+            value=max_line_number, source="manual", reason="user_provided"
+        )
+        if max_line_number is not None
+        else infer_line_limit(rows)
+    )
+    max_line_number = limit.value
+    parameters.max_line_number = max_line_number
+    parameters.line_limit = limit
+    reads = parse_code_lines(rows, max_line_number=max_line_number, suspects=suspects)
     if not reads:
         _bail_with_report(
             video=video,
@@ -337,11 +358,23 @@ def main(
         line_numbers_detected=numbered,
         reads_without_line_number=reads_without_number,
         missing_lines=missing,
+        suspect_line_numbers=suspects,
+        max_line_number=max_line_number,
+        line_limit=limit,
         uncertain_lines=[item for item in merged if item.uncertain],
         unextractable=unextractable_sections(outcomes),
     )
     write_outputs(metadata, parameters, rows, merged, report, output)
 
+    if limit.value is None:
+        console.print("[green]Linha máxima:[/green] desconhecida (fim não confirmado).")
+    else:
+        origin = (
+            "inferida automaticamente"
+            if limit.source == "inferred"
+            else "informada manualmente"
+        )
+        console.print(f"[green]Linha máxima:[/green] {limit.value} ({origin}).")
     console.print(
         f"[green]Report:[/green] {len(missing)} missing lines, "
         f"{uncertain} uncertain, {len(report.unextractable)} unextractable "

@@ -1,0 +1,443 @@
+{
+  "text": "spark_ai/data/io/mlflow_io.py\n1\n2\nUtilitários Te E/S para MLflow - interface simples e deterministica.\n3\n4\nObjetivos de projeto\n5\n6\n**Diretório único para tabelas**: todos Dataframes vão para '`tables/`` na raiz do *run*.\n7\n**Nomes previsiveis**: usa o **nome do objeto** (quando possivel) ou a **chave** do dicionário.\nS\n**Sem retrocompat**: API limpa e direta (agora unifica modelos em models').\n0\n**Parāmetros JSON/prim.**: aceita apenas valores simples (serializáveis) nas estruturas previstas.\n10\n**Modelos Spark com deps explicitas**: fixa `pyspark==<spark.version>*` em ``pip_requirements\n11\n- **Artefatos planos/deterministicos**: sem subpastas por tipo (exceto diretórios de modelos do Mlflow).\n12\n13\nAPI pública (mlflow_io)\n14",
+  "frame_number": 10,
+  "time_seconds": 0.083,
+  "time_formatted": "00:00:00.083",
+  "confidence": 97.5,
+  "sharpness": 1175.46,
+  "frame_image_path": "D:\\LabIA\\text-extract-from-videos\\saida\\IMG_5885-explorer\\extract\\clip_008__mlflow_io.py\\extract\\frames_usados\\frame_10.png",
+  "lines": [
+    {
+      "text": "spark_ai/data/io/mlflow_io.py",
+      "confidence": 99.97,
+      "left": 142,
+      "top": 9,
+      "width": 533,
+      "height": 40,
+      "words": [
+        {
+          "text": "spark_ai/data/io/mlflow_io.py",
+          "confidence": 99.97,
+          "left": 142,
+          "top": 9,
+          "width": 533,
+          "height": 40
+        }
+      ]
+    },
+    {
+      "text": "1",
+      "confidence": 99.95,
+      "left": 68,
+      "top": 14,
+      "width": 25,
+      "height": 33,
+      "words": [
+        {
+          "text": "1",
+          "confidence": 99.95,
+          "left": 68,
+          "top": 14,
+          "width": 25,
+          "height": 33
+        }
+      ]
+    },
+    {
+      "text": "2",
+      "confidence": 99.84,
+      "left": 67,
+      "top": 56,
+      "width": 26,
+      "height": 33,
+      "words": [
+        {
+          "text": "2",
+          "confidence": 99.84,
+          "left": 67,
+          "top": 56,
+          "width": 26,
+          "height": 33
+        }
+      ]
+    },
+    {
+      "text": "Utilitários Te E/S para MLflow - interface simples e deterministica.",
+      "confidence": 99.68,
+      "left": 140,
+      "top": 88,
+      "width": 1162,
+      "height": 47,
+      "words": [
+        {
+          "text": "Utilitários Te E/S para MLflow - interface simples e deterministica.",
+          "confidence": 99.68,
+          "left": 140,
+          "top": 88,
+          "width": 1162,
+          "height": 47
+        }
+      ]
+    },
+    {
+      "text": "3",
+      "confidence": 99.99,
+      "left": 69,
+      "top": 98,
+      "width": 26,
+      "height": 31,
+      "words": [
+        {
+          "text": "3",
+          "confidence": 99.99,
+          "left": 69,
+          "top": 98,
+          "width": 26,
+          "height": 31
+        }
+      ]
+    },
+    {
+      "text": "4",
+      "confidence": 97.7,
+      "left": 67,
+      "top": 139,
+      "width": 27,
+      "height": 33,
+      "words": [
+        {
+          "text": "4",
+          "confidence": 97.7,
+          "left": 67,
+          "top": 139,
+          "width": 27,
+          "height": 33
+        }
+      ]
+    },
+    {
+      "text": "Objetivos de projeto",
+      "confidence": 99.99,
+      "left": 143,
+      "top": 178,
+      "width": 347,
+      "height": 39,
+      "words": [
+        {
+          "text": "Objetivos de projeto",
+          "confidence": 99.99,
+          "left": 143,
+          "top": 178,
+          "width": 347,
+          "height": 39
+        }
+      ]
+    },
+    {
+      "text": "5",
+      "confidence": 100.0,
+      "left": 69,
+      "top": 183,
+      "width": 25,
+      "height": 32,
+      "words": [
+        {
+          "text": "5",
+          "confidence": 100.0,
+          "left": 69,
+          "top": 183,
+          "width": 25,
+          "height": 32
+        }
+      ]
+    },
+    {
+      "text": "6",
+      "confidence": 99.99,
+      "left": 68,
+      "top": 225,
+      "width": 27,
+      "height": 32,
+      "words": [
+        {
+          "text": "6",
+          "confidence": 99.99,
+          "left": 68,
+          "top": 225,
+          "width": 27,
+          "height": 32
+        }
+      ]
+    },
+    {
+      "text": "**Diretório único para tabelas**: todos Dataframes vão para '`tables/`` na raiz do *run*.",
+      "confidence": 97.31,
+      "left": 179,
+      "top": 266,
+      "width": 1510,
+      "height": 34,
+      "words": [
+        {
+          "text": "**Diretório único para tabelas**: todos Dataframes vão para '`tables/`` na raiz do *run*.",
+          "confidence": 97.31,
+          "left": 179,
+          "top": 266,
+          "width": 1510,
+          "height": 34
+        }
+      ]
+    },
+    {
+      "text": "7",
+      "confidence": 99.98,
+      "left": 70,
+      "top": 268,
+      "width": 25,
+      "height": 32,
+      "words": [
+        {
+          "text": "7",
+          "confidence": 99.98,
+          "left": 70,
+          "top": 268,
+          "width": 25,
+          "height": 32
+        }
+      ]
+    },
+    {
+      "text": "**Nomes previsiveis**: usa o **nome do objeto** (quando possivel) ou a **chave** do dicionário.",
+      "confidence": 98.97,
+      "left": 176,
+      "top": 305,
+      "width": 1617,
+      "height": 41,
+      "words": [
+        {
+          "text": "**Nomes previsiveis**: usa o **nome do objeto** (quando possivel) ou a **chave** do dicionário.",
+          "confidence": 98.97,
+          "left": 176,
+          "top": 305,
+          "width": 1617,
+          "height": 41
+        }
+      ]
+    },
+    {
+      "text": "S",
+      "confidence": 88.49,
+      "left": 69,
+      "top": 311,
+      "width": 27,
+      "height": 33,
+      "words": [
+        {
+          "text": "S",
+          "confidence": 88.49,
+          "left": 69,
+          "top": 311,
+          "width": 27,
+          "height": 33
+        }
+      ]
+    },
+    {
+      "text": "**Sem retrocompat**: API limpa e direta (agora unifica modelos em models').",
+      "confidence": 98.92,
+      "left": 177,
+      "top": 349,
+      "width": 1292,
+      "height": 39,
+      "words": [
+        {
+          "text": "**Sem retrocompat**: API limpa e direta (agora unifica modelos em models').",
+          "confidence": 98.92,
+          "left": 177,
+          "top": 349,
+          "width": 1292,
+          "height": 39
+        }
+      ]
+    },
+    {
+      "text": "0",
+      "confidence": 61.28,
+      "left": 69,
+      "top": 352,
+      "width": 27,
+      "height": 28,
+      "words": [
+        {
+          "text": "0",
+          "confidence": 61.28,
+          "left": 69,
+          "top": 352,
+          "width": 27,
+          "height": 28
+        }
+      ]
+    },
+    {
+      "text": "**Parāmetros JSON/prim.**: aceita apenas valores simples (serializáveis) nas estruturas previstas.",
+      "confidence": 98.86,
+      "left": 174,
+      "top": 389,
+      "width": 1668,
+      "height": 43,
+      "words": [
+        {
+          "text": "**Parāmetros JSON/prim.**: aceita apenas valores simples (serializáveis) nas estruturas previstas.",
+          "confidence": 98.86,
+          "left": 174,
+          "top": 389,
+          "width": 1668,
+          "height": 43
+        }
+      ]
+    },
+    {
+      "text": "10",
+      "confidence": 99.99,
+      "left": 54,
+      "top": 394,
+      "width": 43,
+      "height": 35,
+      "words": [
+        {
+          "text": "10",
+          "confidence": 99.99,
+          "left": 54,
+          "top": 394,
+          "width": 43,
+          "height": 35
+        }
+      ]
+    },
+    {
+      "text": "**Modelos Spark com deps explicitas**: fixa `pyspark==<spark.version>*` em ``pip_requirements",
+      "confidence": 97.68,
+      "left": 157,
+      "top": 433,
+      "width": 1628,
+      "height": 42,
+      "words": [
+        {
+          "text": "**Modelos Spark com deps explicitas**: fixa `pyspark==<spark.version>*` em ``pip_requirements",
+          "confidence": 97.68,
+          "left": 157,
+          "top": 433,
+          "width": 1628,
+          "height": 42
+        }
+      ]
+    },
+    {
+      "text": "11",
+      "confidence": 99.98,
+      "left": 54,
+      "top": 437,
+      "width": 42,
+      "height": 34,
+      "words": [
+        {
+          "text": "11",
+          "confidence": 99.98,
+          "left": 54,
+          "top": 437,
+          "width": 42,
+          "height": 34
+        }
+      ]
+    },
+    {
+      "text": "- **Artefatos planos/deterministicos**: sem subpastas por tipo (exceto diretórios de modelos do Mlflow).",
+      "confidence": 99.53,
+      "left": 151,
+      "top": 475,
+      "width": 1759,
+      "height": 44,
+      "words": [
+        {
+          "text": "- **Artefatos planos/deterministicos**: sem subpastas por tipo (exceto diretórios de modelos do Mlflow).",
+          "confidence": 99.53,
+          "left": 151,
+          "top": 475,
+          "width": 1759,
+          "height": 44
+        }
+      ]
+    },
+    {
+      "text": "12",
+      "confidence": 99.88,
+      "left": 55,
+      "top": 479,
+      "width": 42,
+      "height": 34,
+      "words": [
+        {
+          "text": "12",
+          "confidence": 99.88,
+          "left": 55,
+          "top": 479,
+          "width": 42,
+          "height": 34
+        }
+      ]
+    },
+    {
+      "text": "13",
+      "confidence": 99.99,
+      "left": 55,
+      "top": 521,
+      "width": 43,
+      "height": 34,
+      "words": [
+        {
+          "text": "13",
+          "confidence": 99.99,
+          "left": 55,
+          "top": 521,
+          "width": 43,
+          "height": 34
+        }
+      ]
+    },
+    {
+      "text": "API pública (mlflow_io)",
+      "confidence": 99.87,
+      "left": 147,
+      "top": 560,
+      "width": 395,
+      "height": 41,
+      "words": [
+        {
+          "text": "API pública (mlflow_io)",
+          "confidence": 99.87,
+          "left": 147,
+          "top": 560,
+          "width": 395,
+          "height": 41
+        }
+      ]
+    },
+    {
+      "text": "14",
+      "confidence": 99.99,
+      "left": 56,
+      "top": 563,
+      "width": 42,
+      "height": 33,
+      "words": [
+        {
+          "text": "14",
+          "confidence": 99.99,
+          "left": 56,
+          "top": 563,
+          "width": 42,
+          "height": 33
+        }
+      ]
+    }
+  ]
+}

@@ -291,6 +291,13 @@ class MergedLine(BaseModel):
     uncertain: bool = False
 
 
+class SuspectLineNumber(BaseModel):
+    """Rejected numbering evidence; content and frame remain inspectable."""
+
+    read: LineRead
+    reason: str
+
+
 class FrameOutcome(BaseModel):
     """Whether one sampled frame's content was captured — feeds the failure report."""
 
@@ -377,12 +384,23 @@ def validate_output_name(value: str) -> str:
     return value
 
 
+class LineLimitEvidence(BaseModel):
+    """Known source bound and the provenance of its determination."""
+
+    value: int | None = Field(default=None, gt=0)
+    source: Literal["unknown", "manual", "inferred"] = "unknown"
+    reason: str = "not_evaluated"
+    frames: list[int] = Field(default_factory=list)
+
+
 class ExtractionParameters(BaseModel):
     """User-requested and effective extraction controls for one run."""
 
     engine: EngineName = EngineName.tesseract
     output_extension: OutputExtension = OutputExtension.txt
     output_name: str = "codigo_extraido"
+    max_line_number: int | None = Field(default=None, gt=0)
+    line_limit: LineLimitEvidence = Field(default_factory=LineLimitEvidence)
 
     @field_validator("output_name")
     @classmethod
@@ -506,6 +524,9 @@ class FailureReport(BaseModel):
     """Reads excluded from the numbered reconstruction because no line number
     was detected for them — their raw text survives in `ocr_raw.csv`."""
     missing_lines: list[MissingLine] = Field(default_factory=list)
+    suspect_line_numbers: list[SuspectLineNumber] = Field(default_factory=list)
+    line_limit: LineLimitEvidence = Field(default_factory=LineLimitEvidence)
+    max_line_number: int | None = Field(default=None, gt=0)
     uncertain_lines: list[MergedLine] = Field(default_factory=list)
     unextractable: list[TimeSpan] = Field(default_factory=list)
 
@@ -536,6 +557,7 @@ RUN_ARTIFACT_FILENAMES = (
     "metadata_video.json",
     "extraction_parameters.json",
     "review_manifest.json",
+    "line_number_audit.json",
 )
 """Run-scoped output files cleared up front so failed runs cannot leave a
 previous run's artifacts mixed with this run's fresh outputs."""
