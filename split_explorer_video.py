@@ -247,7 +247,10 @@ def split(
                 detector,
                 duration,
                 scan_fps,
-                lambda t: typer.echo(f"Analyzing {t:.1f}/{duration:.1f}s"),
+                progress=lambda t: typer.echo(f"Scanning {t:.1f}/{duration:.1f}s"),
+                refinement_progress=lambda t: typer.echo(
+                    f"Refining transitions {t:.1f}/{duration:.1f}s"
+                ),
             )
             result = summarize(
                 observations,

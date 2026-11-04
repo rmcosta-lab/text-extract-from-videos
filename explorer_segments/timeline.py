@@ -14,6 +14,7 @@ def scan(
     duration: float,
     scan_fps: float = 4,
     progress: Callable[[float], None] | None = None,
+    refinement_progress: Callable[[float], None] | None = None,
 ) -> list[Observation]:
     observations: dict[int, Observation] = {}
     if scan_fps == 0:
@@ -38,7 +39,12 @@ def scan(
         # Include a tail observation without seeking beyond the last decodable frame.
         frame, seconds, image = reader.read_at(max(0, duration - 2 / reader.fps))
         observations[frame] = detector.observe(frame, seconds, image)
-    return refine_observations(reader, detector, list(observations.values()), progress)
+    return refine_observations(
+        reader,
+        detector,
+        list(observations.values()),
+        refinement_progress if refinement_progress is not None else progress,
+    )
 
 
 def refine_observations(
