@@ -156,6 +156,48 @@ def test_frame_limit_does_not_silently_omit_evidence(tmp_path: Path) -> None:
         prepare_request(fixture_manifest(tmp_path), max_frames=0)
 
 
+@pytest.mark.parametrize(
+    "total,selected,limit", [(31, None, 30), (5, {1, 2}, 1), (0, None, 30)]
+)
+def test_frame_limit_reports_total_and_selected_counts(
+    tmp_path: Path, total: int, selected: set[int] | None, limit: int
+) -> None:
+    path = fixture_manifest(tmp_path)
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    template = manifest["frames"][0]
+    manifest["frames"] = [{**template, "frame_number": i} for i in range(1, total + 1)]
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    count = total if selected is None else len(selected)
+    with pytest.raises(ValueError) as error:
+        prepare_request(path, max_frames=limit, selected_frames=selected)
+    assert f"found {total} frames in the extraction manifest" in str(error.value)
+    assert f"{count} selected for this request" in str(error.value)
+
+
+def test_default_accepts_all_frames_beyond_previous_count_limit(tmp_path: Path) -> None:
+    path = fixture_manifest(tmp_path)
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    template = manifest["frames"][0]
+    manifest["frames"] = [{**template, "frame_number": i} for i in range(1, 102)]
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    _, _, ids, _, _ = prepare_request(path)
+    assert len(ids) == 101
+    result = CliRunner().invoke(app, ["--extraction", str(tmp_path), "--dry-run"])
+    assert result.exit_code == 0, result.output
+
+
+def test_all_frames_still_respect_image_size_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = fixture_manifest(tmp_path)
+    monkeypatch.setattr("video_ocr.review.MAX_REVIEW_IMAGE_BYTES", 1)
+    with pytest.raises(ValueError, match="Images exceed 25 MB"):
+        prepare_request(path)
+    result = CliRunner().invoke(app, ["--extraction", str(tmp_path), "--dry-run"])
+    assert result.exit_code == 1
+    assert "No API call made" in result.output
+
+
 @pytest.mark.parametrize("fmt", ["JPEG", "WEBP"])
 def test_prepared_image_is_sent_unchanged_without_original(
     tmp_path: Path, fmt: str

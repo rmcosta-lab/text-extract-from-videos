@@ -23,6 +23,7 @@ from video_ocr.models import (
     _format_time,
     _require_pandas,
     fail,
+    validate_output_name,
 )
 from video_ocr.reconstruction import (
     _missing_line_entries,
@@ -172,7 +173,8 @@ def _clear_stale_artifacts(output: Path) -> None:
         try:
             data = json.loads(previous.read_text(encoding="utf-8"))
             extension = OutputExtension(data.get("output_extension", "txt"))
-            names.append(f"codigo_extraido.{extension.value}")
+            name = validate_output_name(data.get("output_name", "codigo_extraido"))
+            names.extend((f"{name}.txt", f"{name}.{extension.value}"))
         except (OSError, ValueError, AttributeError):
             # Never infer an arbitrary path from a malformed previous manifest.
             pass

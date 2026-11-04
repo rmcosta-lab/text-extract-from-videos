@@ -17,6 +17,8 @@ from video_ocr.imaging import encode_review_webp
 from video_ocr.models import CropBox, OutputExtension
 from video_ocr.review_storage import atomic_json, atomic_text
 
+MAX_REVIEW_IMAGE_BYTES = 25_000_000
+
 
 class ReviewEdit(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -77,7 +79,7 @@ def local_path(root: Path, relative: str) -> Path:
 
 def prepare_request(
     manifest_path: Path,
-    max_frames: int = 12,
+    max_frames: int | None = None,
     detail: str = "high",
     *,
     selected_frames: set[int] | None = None,
@@ -111,9 +113,14 @@ def prepare_request(
         if not selected_frames <= set(all_ids):
             raise ValueError("Selected frame is missing from manifest")
         frames = [f for f in frames if int(f["frame_number"]) in selected_frames]
-    if not 1 <= len(frames) <= max_frames:
+    if not frames or (max_frames is not None and len(frames) > max_frames):
+        requirement = (
+            f"1..{max_frames} frames" if max_frames is not None else "at least 1 frame"
+        )
         raise ValueError(
-            f"Review needs 1..{max_frames} frames; "
+            f"Review needs {requirement}; "
+            f"found {len(all_ids)} frames in the extraction manifest, "
+            f"{len(frames)} selected for this request; "
             "split the segment or raise --max-frames"
         )
     crop = CropBox.model_validate(manifest["parameters"]["crop"])
@@ -163,8 +170,12 @@ def prepare_request(
             mime_type = "image/webp"
         image_bytes += len(data)
         image_hashes[str(index)] = hashlib.sha256(data).hexdigest()
-        if image_bytes > 25_000_000:
-            raise ValueError("Images exceed 25 MB; use a shorter review segment")
+        if image_bytes > MAX_REVIEW_IMAGE_BYTES:
+            raise ValueError(
+                f"Images exceed 25 MB ({image_bytes:,} image bytes after "
+                f"{len(image_hashes)} of {len(frames)} selected frames); "
+                "use a shorter review segment. No API call made."
+            )
         content.extend(
             [
                 {

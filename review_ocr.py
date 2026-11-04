@@ -28,7 +28,14 @@ def main(
     output: Path | None = None,
     dry_run: bool = False,
     system_certs: bool = False,
-    max_frames: Annotated[int, typer.Option(min=1, max=100)] = 12,
+    max_frames: Annotated[
+        int | None,
+        typer.Option(
+            min=1,
+            help="Optional frame count limit; default includes all selected frames. "
+            "The 25 MB image limit still applies.",
+        ),
+    ] = None,
     max_output_tokens: Annotated[
         int, typer.Option(min=100, max=64000, envvar="OPENAI_REVIEW_MAX_OUTPUT_TOKENS")
     ] = 12000,

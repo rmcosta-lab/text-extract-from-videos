@@ -12,7 +12,7 @@ from typing import (
 )
 
 import typer
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from rich.console import Console
 
 if TYPE_CHECKING:
@@ -353,11 +353,42 @@ class PreprocessConfig(BaseModel):
     max_side: int = Field(default=4000, ge=32)
 
 
+def validate_output_name(value: str) -> str:
+    """Require one portable directory/file stem, never a relative path."""
+    reserved = {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *{f"COM{i}" for i in range(1, 10)},
+        *{f"LPT{i}" for i in range(1, 10)},
+    }
+    if (
+        not isinstance(value, str)
+        or not value
+        or value in {".", ".."}
+        or value != value.strip()
+        or value.endswith(".")
+        or re.search(r'[<>:"/\\|?*\x00-\x1f]', value)
+        or value.split(".", maxsplit=1)[0].upper() in reserved
+        or value == "relatorio_falhas"
+    ):
+        raise ValueError("output-name must be a valid single folder/file name")
+    return value
+
+
 class ExtractionParameters(BaseModel):
     """User-requested and effective extraction controls for one run."""
 
     engine: EngineName = EngineName.tesseract
     output_extension: OutputExtension = OutputExtension.txt
+    output_name: str = "codigo_extraido"
+
+    @field_validator("output_name")
+    @classmethod
+    def valid_output_name(cls, value: str) -> str:
+        return validate_output_name(value)
+
     prepare_review: bool = False
     blur_retry_seconds: float = Field(default=0.25, ge=0, le=1)
     stability_window_seconds: float = Field(default=0.5, ge=0, le=2)

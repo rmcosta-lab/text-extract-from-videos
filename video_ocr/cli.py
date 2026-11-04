@@ -23,6 +23,7 @@ from video_ocr.models import (
     app,
     console,
     fail,
+    validate_output_name,
 )
 from video_ocr.ocr import (
     create_ocr_engine,
@@ -63,8 +64,12 @@ def main(
     ],
     output: Annotated[
         Path,
-        typer.Option(help="Path to the output directory."),
+        typer.Option(help="Root output directory; artifacts go in NAME/extract/."),
     ],
+    output_name: Annotated[
+        str | None,
+        typer.Option(help="Extraction folder name; defaults to the video stem."),
+    ] = None,
     crop_left: Annotated[
         int,
         typer.Option(min=0, help="Pixels to crop from the left edge before OCR."),
@@ -139,6 +144,13 @@ def main(
     if not video.is_file():
         fail(f"video path is not a file: [cyan]{video}[/cyan]")
 
+    try:
+        output_name = validate_output_name(
+            video.stem if output_name is None else output_name
+        )
+    except ValueError as exc:
+        fail(str(exc))
+    output = output / output_name / "extract"
     crop = CropBox(left=crop_left, top=crop_top, right=crop_right, bottom=crop_bottom)
     preprocessing = PreprocessConfig(
         profile=preprocess, scale=ocr_scale, max_side=ocr_max_side
@@ -171,6 +183,7 @@ def main(
     parameters.blur_retry_seconds = blur_retry_seconds
     parameters.stability_window_seconds = stability_window_seconds
     parameters.output_extension = output_extension
+    parameters.output_name = output_name
     parameters.prepare_review = prepare_review
     metadata = metadata.model_copy(
         update={

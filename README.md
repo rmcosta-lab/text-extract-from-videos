@@ -142,13 +142,17 @@ uv export --locked --no-dev --format requirements-txt --output-file requirements
 ### Extensão da saída e preparação para revisão visual
 
 Use `--output-extension txt`, `md` ou `py` (sem ponto). O padrão é `txt`.
-A extensão selecionada gera `codigo_extraido.md` ou `codigo_extraido.py`,
-mantendo também `codigo_extraido.txt` como registro do OCR. O conteúdo é
+`--output` é o diretório raiz e `--output-name` define a pasta e o nome do
+arquivo extraído. Todos os dados ficam em `<output>/<output-name>/extract/`.
+Se `--output-name` for omitido, usa o nome do vídeo sem a extensão.
+Por exemplo, `--output saida --output-name selection --output-extension py`
+gera `saida/selection/extract/selection.py`, mantendo também `selection.txt`
+como registro do OCR. O conteúdo é
 idêntico, inclusive os marcadores de incerteza: a extensão não formata nem
 corrige o texto, e um `.py` não é necessariamente Python válido.
 
 ```powershell
-uv run --group paddle-gpu python extract_code_from_video.py --video example/IMG_1128.MOV --engine paddle --output saida/trecho-md --start-time 3.5 --end-time 9 --crop-left 62 --crop-top 471 --crop-right 162 --crop-bottom 0 --output-extension md --prepare-review
+uv run --group paddle-gpu python extract_code_from_video.py --video example/IMG_1128.MOV --engine paddle --output saida --output-name trecho-md --start-time 3.5 --end-time 9 --crop-left 62 --crop-top 471 --crop-right 162 --crop-bottom 0 --output-extension md --prepare-review
 ```
 
 `--prepare-review` salva os frames originais dos frames aceitos, além das imagens
@@ -176,9 +180,9 @@ O comando lê o modelo e o nível de raciocínio desse ambiente. `--model` e
 ```powershell
 uv sync --locked --group paddle-gpu --group review --system-certs
 # Valida os arquivos e mostra o modelo configurado, sem chamar a API:
-uv run --group review --env-file .env.local python review_ocr.py --extraction saida/trecho-md --output saida/trecho-md/revisao-sol --dry-run
+uv run --group review --env-file .env.local python review_ocr.py --extraction saida/trecho-md/extract --output saida/trecho-md/revisao-sol --dry-run
 # Envia o texto e os frames recortados para revisão (API paga):
-uv run --group review --env-file .env.local python review_ocr.py --extraction saida/trecho-md --output saida/trecho-md/revisao-sol --image-detail original --system-certs
+uv run --group review --env-file .env.local python review_ocr.py --extraction saida/trecho-md/extract --output saida/trecho-md/revisao-sol --image-detail original --system-certs
 ```
 
 `--system-certs` usa os certificados confiáveis do sistema e mantém TLS validado.
@@ -204,9 +208,12 @@ Essas validações não provam que a interpretação do modelo está correta: co
 as sugestões e o diff. Um `.py` revisado também não é executado pelo programa.
 
 Uma revisão existente não é sobrescrita: use outra pasta em `--output`.
-O limite padrão por chamada é 12 frames, 100 mil caracteres e 25 MB de imagens codificadas
-antes de base64. O comando falha sem omitir evidências se exceder os limites.
-Use trechos menores ou ajuste `--max-frames` quando apropriado. O limite de saída
+Por padrão, todos os frames selecionados são incluídos, sem limite de quantidade.
+`--max-frames N` permite definir um limite explícito. Continuam valendo os limites
+locais de 100 mil caracteres e 25 MB de imagens codificadas antes de base64 por
+chamada. O comando falha antes do envio, sem omitir evidências, se exceder esses
+limites; use trechos menores ou `--chunk-lines` para revisar por blocos.
+O limite de saída
 é controlado por `--max-output-tokens` (padrão 12000, incluindo reasoning);
 respostas incompletas não são aplicadas e não há repetição automática de chamadas.
 

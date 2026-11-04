@@ -12,8 +12,10 @@ from video_ocr.models import (
     EngineName,
     LineRead,
     MergedLine,
+    OCRLine,
     OCRRow,
     OutputExtension,
+    SelectionStats,
     VideoMetadata,
 )
 from video_ocr.reports import (
@@ -115,3 +117,101 @@ def test_review_manifest_maps_export_lines_to_frames(tmp_path: Path) -> None:
     assert data["frames"][0]["original_image"] == "frames_usados/frame_210_original.png"
     assert data["frames"][0]["review_image"] == "frames_usados/frame_210_review.webp"
     assert data["frames"][0]["review_crop"] == parameters.crop.model_dump()
+
+
+@pytest.mark.parametrize("extension", list(OutputExtension))
+@pytest.mark.parametrize("output_name", ["selection", None])
+def test_cli_named_extraction_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extension: OutputExtension,
+    output_name: str | None,
+) -> None:
+    name = output_name or "recording"
+    video = tmp_path / "recording.mov"
+    video.write_bytes(b"video")
+    root = tmp_path / "output"
+    metadata = VideoMetadata(
+        fps=30,
+        duration_seconds=3,
+        width=720,
+        height=480,
+        total_frames=90,
+        source="ffprobe",
+    )
+    monkeypatch.setattr("video_ocr.cli.get_video_metadata", lambda *args: metadata)
+    monkeypatch.setattr("video_ocr.cli.create_ocr_engine", lambda *args: object())
+    monkeypatch.setattr("video_ocr.cli.sample_frames", lambda *args: iter(()))
+    row = OCRRow(
+        text="10 x = 1",
+        lines=[OCRLine(text="10 x = 1", confidence=99)],
+        frame_number=1,
+        time_seconds=0.03,
+        time_formatted="00:00:00.030",
+        frame_image_path="frames_usados/frame_1.png",
+    )
+    monkeypatch.setattr(
+        "video_ocr.cli.run_ocr",
+        lambda *args, **kwargs: (
+            [row],
+            SelectionStats(frames_sampled=1, frames_kept=1),
+            [],
+        ),
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "--video",
+            str(video),
+            "--output",
+            str(root),
+            *(["--output-name", output_name] if output_name is not None else []),
+            "--output-extension",
+            extension.value,
+            "--prepare-review",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    out = root / name / "extract"
+    assert (out / "codigo_extraido.txt").is_file()
+    assert (out / f"codigo_extraido.{extension.value}").read_bytes() == (
+        out / "codigo_extraido.txt"
+    ).read_bytes()
+    assert not (out / f"{name}.txt").exists()
+    manifest = json.loads((out / "review_manifest.json").read_text())
+    assert manifest["ocr_original"] == "codigo_extraido.txt"
+    assert manifest["target_file"] == f"codigo_extraido.{extension.value}"
+    assert manifest["parameters"]["output_name"] == name
+    assert (out / "frames_usados").is_dir()
+    assert not (root / "metadata_video.json").exists()
+
+
+@pytest.mark.parametrize(
+    "name", ["../escape", "a/b", "a\\b", "", "..", "CON", "x:", "relatorio_falhas"]
+)
+def test_invalid_output_name_does_not_create_output(tmp_path: Path, name: str) -> None:
+    video = tmp_path / "video.mov"
+    video.touch()
+    root = tmp_path / "output"
+    result = CliRunner().invoke(
+        app, ["--video", str(video), "--output", str(root), "--output-name", name]
+    )
+    assert result.exit_code != 0
+    assert not root.exists()
+
+
+def test_named_cleanup_is_scoped_to_previous_recorded_outputs(tmp_path: Path) -> None:
+    (tmp_path / "extraction_parameters.json").write_text(
+        json.dumps(
+            {
+                "output_name": "selection",
+                "output_extension": "py",
+            }
+        )
+    )
+    for name in ("selection.txt", "selection.py", "unrelated.py"):
+        (tmp_path / name).write_text("old")
+    prepare_output_tree(tmp_path)
+    assert not (tmp_path / "selection.txt").exists()
+    assert not (tmp_path / "selection.py").exists()
+    assert (tmp_path / "unrelated.py").exists()
